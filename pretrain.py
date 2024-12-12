@@ -63,7 +63,7 @@ def make_agent_dataset(dataset_tr, dataset_val, class_num=6):
     dataset_val.y = kmeans.predict(dataset_val.X)
 
 
-original_data = ssv_data.DCAESSVData(ssv_size=200, normal_size=500, excep_size=100)
+original_data = ssv_data.KnowledgeSSVData(ssv_size=200, normal_size=500, excep_size=100)
 ssv_set = original_data.get_ssv()
 class_num = ssv_set.y.shape[-1]
 # ssv_set = data_preprocess.create_cwru_dataset(train=False, ssv=True, ssv_size=100, excep_num=100, normal_num=500, train_frac=0.8)

@@ -53,3 +53,18 @@ class KmeansSSVData(DataBase):
             else:
                 l[v] += 1
         return y_kmeans
+
+class NonLabelSSVData(DataBase):
+
+    def make_ssv_label(self):
+
+        return np.zeros((len(self.ssv_set), 1))
+
+    def get_train(self, transforms = None):
+        return CWRUdata(self.signals_tr_ssv, self.labels_tr_ssv, transforms)
+
+    def get_ssv(self, transforms = None):
+        return CWRUdata(self.ssv_set , self.make_ssv_label(), transforms)
+
+    def get_test(self, transforms = None):
+        return CWRUdata(self.signals_tt_np, self.labels_tt_np, transforms)

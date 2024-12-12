@@ -7,7 +7,7 @@ BY rlk
 
 
 from torch import nn
-
+import torch
 
 class Flatten(nn.Module):
     def forward(self, x):
@@ -158,3 +158,163 @@ class CNN_Fine(nn.Module):
         x = self.layers(x)
         x = self.linear(x)
         return self.soft(x)
+
+    def forward_without_fc(self, x):
+        x = self.layers(x)
+        x = self.linear(x)
+        return self.soft(x)
+
+
+class CNNEncoder(nn.Module):
+    def __init__(self, num_classes, input_channels=1, hidden_size=256, num_blocks=10, zero_init_residual=False, kernel_num1=27, kernel_num2=27, kernel_size=55, pad=0, ms1=16, ms2=16,):
+        """
+        A CNN encoder with stacked Conv1d blocks.
+
+        :param input_channels: Number of input channels for the first convolutional layer
+        :param hidden_size: Number of kernels (output channels) in each convolutional layer
+        :param num_blocks: Number of stacked convolutional blocks
+        """
+        super(CNNEncoder, self).__init__()
+
+        pad = int((kernel_size - 1) / 2)
+        self.layers = nn.Sequential(
+            nn.Conv1d(1, kernel_num1, kernel_size, padding=pad),
+            nn.BatchNorm1d(kernel_num1),
+            nn.ReLU(),
+            nn.MaxPool1d(ms1),
+            nn.Conv1d(kernel_num1, kernel_num1, kernel_size, padding=pad),
+            nn.BatchNorm1d(kernel_num1),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Conv1d(kernel_num1, kernel_num1, kernel_size, padding=pad),
+            nn.BatchNorm1d(kernel_num1),
+            nn.ReLU(),
+            nn.MaxPool1d(ms2),
+            nn.Conv1d(kernel_num1, kernel_num2, kernel_size, padding=pad),
+            nn.BatchNorm1d(kernel_num2),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Conv1d(kernel_num2, kernel_num2, kernel_size, padding=pad),
+            nn.BatchNorm1d(kernel_num2),
+            nn.ReLU(),
+            Flatten()
+        )
+        if zero_init_residual:
+            nn.init.zeros_(self.layers[-3].weight)
+        self.fc = nn.Linear(108, num_classes)
+        # ms1=16,ms2=16
+        #            nn.Linear(27*14, 101)) #ms1=16,ms2=9
+        #            nn.Linear(27*25, 101)) #ms1=9,ms2=9
+        #            nn.Linear(27*75, 101))  #ms1=9,ms2=3
+
+    def forward(self, x):
+        x = self.layers(x)
+        return self.fc(x)
+
+
+class StackedCNNEncoderWithPooling(nn.Module):
+    def __init__(self, num_classes, zero_init_residual=False, input_channels=1, hidden_size=256, num_blocks=10, pooling="max"):
+        """
+        Encoder with stacked CNN blocks and pooling layers.
+
+        :param input_channels: Number of input channels for the first convolutional layer
+        :param hidden_size: Number of kernels (output channels) in each convolutional layer
+        :param num_blocks: Number of stacked convolutional blocks
+        :param pooling: Pooling method: "avg" for average pooling, "max" for max pooling
+        """
+        super(StackedCNNEncoderWithPooling, self).__init__()
+
+        layers = []
+        for i in range(num_blocks):
+            layers.append(
+                nn.Conv1d(
+                    in_channels=input_channels if i == 0 else hidden_size,
+                    out_channels=hidden_size,
+                    kernel_size=3,
+                    padding=1,
+                    stride=1
+                )
+            )
+            layers.append(nn.ReLU())
+            layers.append(nn.BatchNorm1d(hidden_size))
+            # Add pooling layer
+            if pooling == "avg":
+                layers.append(nn.AvgPool1d(kernel_size=2, stride=2))  # Average pooling
+            elif pooling == "max":
+                layers.append(nn.MaxPool1d(kernel_size=2, stride=2))  # Max pooling
+        layers.append(Flatten())
+        # if zero_init_residual:
+        #     nn.init.constant_(layers[-3].weight, 0)
+        self.encoder = nn.Sequential(*layers)
+        self.fc = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.BatchNorm1d(256),
+            nn.Linear(256, num_classes)
+        )
+
+    def forward(self, x):
+        """
+        Forward pass of the encoder with pooling.
+
+        :param x: Input tensor of shape (batch_size, input_channels, sequence_length)
+        :return: Encoded features
+        """
+        x = self.encoder(x)
+        x = self.fc(x)
+        return x
+
+
+    def forward_without_fc(self, x):
+        """
+        Forward pass of the encoder with pooling.
+
+        :param x: Input tensor of shape (batch_size, input_channels, sequence_length)
+        :return: Encoded features
+        """
+        x = self.encoder(x)
+        return x
+
+
+class StackedCNNEncoderWithPoolingNoFC(nn.Module):
+    def __init__(self, num_classes, zero_init_residual=False, input_channels=1, hidden_size=256, num_blocks=10, pooling="avg"):
+        """
+        Encoder with stacked CNN blocks and pooling layers.
+
+        :param input_channels: Number of input channels for the first convolutional layer
+        :param hidden_size: Number of kernels (output channels) in each convolutional layer
+        :param num_blocks: Number of stacked convolutional blocks
+        :param pooling: Pooling method: "avg" for average pooling, "max" for max pooling
+        """
+        super(StackedCNNEncoderWithPoolingNoFC, self).__init__()
+
+        layers = []
+        for i in range(num_blocks):
+            layers.append(
+                nn.Conv1d(
+                    in_channels=input_channels if i == 0 else hidden_size,
+                    out_channels=hidden_size,
+                    kernel_size=3,
+                    padding=1,
+                    stride=1
+                )
+            )
+            layers.append(nn.ReLU())
+            layers.append(nn.BatchNorm1d(hidden_size))
+
+            # Add pooling layer
+            if pooling == "avg":
+                layers.append(nn.AvgPool1d(kernel_size=16, stride=1))  # Average pooling
+            elif pooling == "max":
+                layers.append(nn.MaxPool1d(kernel_size=16, stride=1))  # Max pooling
+        layers.append(Flatten())
+        self.encoder = nn.Sequential(*layers)
+        self.fc = nn.Linear(256, num_classes)
+    def forward(self, x):
+        """
+        Forward pass of the encoder with pooling.
+
+        :param x: Input tensor of shape (batch_size, input_channels, sequence_length)
+        :return: Encoded features
+        """
+        x = self.encoder(x)
+        return x

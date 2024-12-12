@@ -17,16 +17,29 @@ from Ae1d import create_ae_label
 from DCAe1d import create_dcae_label
 
 class CWRUdata(data.Dataset):
-
-    def __init__(self, x_set, y_set):
+    def __init__(self, x_set, y_set, transform=None):
+        """
+        Custom dataset for CWRU data.
+        :param x_set: Feature data (e.g., signals or images)
+        :param y_set: Corresponding labels
+        :param transform: Transformation to apply to the data
+        """
         self.X = x_set
         self.y = y_set
+        self.transform = transform
 
     def __len__(self):
         return self.X.shape[0]
 
     def __getitem__(self, idx):
-        return self.X[idx], self.y[idx]
+        sample = self.X[idx]
+        label = self.y[idx]
+
+        # Apply transformation if available
+        if self.transform is not None:
+            sample = self.transform(sample)
+
+        return sample, label
 
 
 '''以下5个函数构造长尾分布数据集用的，直接看create_cwru_dataset()'''
@@ -75,7 +88,7 @@ def train_set_split_ssv(train_x, train_y, ssv_num):
             # 剩余的作为训练集
             train_indices.extend([idx for idx in class_indices if idx not in test_indices])
         return X[train_indices], X[test_indices], Y[train_indices], Y[test_indices]
-    num_samples_per_class = ssv_num * np.ones((6), dtype=int)
+    num_samples_per_class = ssv_num * np.ones((train_y.max()+1), dtype=int)
 
     X_train, X_test, Y_train, Y_test = split_dataset(train_x, train_y, num_samples_per_class)
     return X_train, Y_train, X_test
@@ -96,7 +109,7 @@ def get_imb_data(signals, labels, excep_num, normal_num):
             train_indices.extend([idx for idx in class_indices if idx not in test_indices])
         return X[train_indices], X[test_indices], Y[train_indices], Y[test_indices]
 
-    num_samples_per_class = excep_num * np.ones((6), dtype=int)
+    num_samples_per_class = excep_num * np.ones((labels.max() + 1), dtype=int)
     num_samples_per_class[0] = normal_num
 
     X_train, X_test, Y_train, Y_test = split_dataset(signals, labels, num_samples_per_class)
@@ -334,14 +347,14 @@ def get_lt_data_rest(signals, labels, imbalance_factor=10, alpha=5):
 
 
 def get_mean_data(signals, labels):
-    label_num = [0,0,0,0,0,0]
+    label_num = np.zeros((labels.max()+1))
     for label in labels:
         label_num[label] += 1
     label_num = np.array(label_num)
     max_num = max(label_num)
     min_num = min(label_num)
 
-    mean_label_num = min_num*np.ones_like([0,0,0,0,0,0])
+    mean_label_num = min_num*np.ones((labels.max()+1))
 
     new_signals_tr_np = []
     new_labels_tr_np = []
@@ -365,9 +378,10 @@ def create_base_dataset(file_name, train_frac, dim):
     labels_tr = []
     signals_tt = []
     labels_tt = []
-    addition_sample_num = 0
     for idx in range(len(frame)):
         mat_name = os.path.join('data/raw_data', frame['file_name'][idx])
+        if not os.path.isfile(mat_name):
+            continue
         raw_data = scio.loadmat(mat_name)
         for key, value in raw_data.items():
             if key[5:7] == 'DE':
@@ -381,7 +395,7 @@ def create_base_dataset(file_name, train_frac, dim):
                 signals_tr.append(signals[0:train_num, :])
 
                 signals_tt.append(signals[train_num:sample_num, :])
-                labels_tr.append(frame['label'][idx] * np.ones(train_num + addition_sample_num))
+                labels_tr.append(frame['label'][idx] * np.ones(train_num))
                 labels_tt.append(frame['label'][idx] * np.ones(test_num))
 
     signals_tr_np = np.concatenate(signals_tr).squeeze()
