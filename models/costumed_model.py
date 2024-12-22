@@ -251,6 +251,7 @@ class StackedCNNEncoderWithPooling(nn.Module):
             nn.BatchNorm1d(256),
             nn.Linear(256, num_classes)
         )
+        self.num_classes = num_classes
 
     def forward(self, x):
         """

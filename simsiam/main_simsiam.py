@@ -31,6 +31,8 @@ import simsiam.loader
 import simsiam.builder
 from torch.optim.lr_scheduler import ExponentialLR
 
+from DA.data_augmentations import *
+
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
@@ -73,7 +75,7 @@ parser.add_argument('--dist-url', default='tcp://224.66.41.62:23456', type=str,
                     help='url used to set up distributed training')
 parser.add_argument('--dist-backend', default='nccl', type=str,
                     help='distributed backend')
-parser.add_argument('--seed', default=None, type=int,
+parser.add_argument('--seed', default=42, type=int,
                     help='seed for initializing training. ')
 parser.add_argument('--gpu', default=0, type=int,
                     help='GPU id to use.')
@@ -99,6 +101,7 @@ parser.add_argument('--excep_size', default=100, type=int,
 
 def main():
     args = parser.parse_args()
+    args.fix_pred_lr = True
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -162,17 +165,19 @@ def main_worker(gpu, ngpus_per_node, args):
     criterion = nn.CosineSimilarity(dim=1).cuda(args.gpu)
 
     if args.fix_pred_lr:
-        optim_params = [{'params': model.module.encoder.parameters(), 'fix_lr': False},
-                        {'params': model.module.predictor.parameters(), 'fix_lr': True}]
+        optim_params = [{'params': model.encoder.parameters(), 'fix_lr': False},
+                        {'params': model.predictor.parameters(), 'fix_lr': True}]
     else:
         optim_params = model.parameters()
 
-    initial_lr = 0.05
-    optimizer = torch.optim.SGD(model.parameters(), lr=initial_lr)
-
+    # initial_lr = 0.05
+    # optimizer = torch.optim.SGD(model.parameters(), lr=initial_lr)
+    optimizer = torch.optim.SGD(optim_params, init_lr,
+                                momentum=args.momentum,
+                                weight_decay=args.weight_decay)
     # Define the exponential decay scheduler
     gamma = 0.95  # Decay factor
-    scheduler = ExponentialLR(optimizer, gamma=gamma)
+    # scheduler = ExponentialLR(optimizer, gamma=gamma)
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -195,41 +200,25 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
-    import DA.data_augmentations
     augmentation = [
-        # DA.data_augmentations.AddGaussianNoiseSNR(snr=6),
-        # DA.data_augmentations.RandomCrop([100,200,300]),
-        # DA.data_augmentations.AddGaussianNoise(),
-        # DA.data_augmentations.RandomChooseDA(
-        #     [
-        #         DA.data_augmentations.GaussianWeightedMovingAverage(5, 1),
-        #         DA.data_augmentations.GaussianWeightedMovingAverage(10, 1),
-        #         DA.data_augmentations.GaussianWeightedMovingAverage(20, 1),
-        #     ]
-        # )
-
-        DA.data_augmentations.TimeShift(512),
-        DA.data_augmentations.RandomChunkShuffle(20),
-        DA.data_augmentations.AddGaussianNoiseSNR(snr=6),
-        DA.data_augmentations.RandomCrop([ 5,6,7], 100),
-        DA.data_augmentations.RandomScaled((0.5, 1.5)),
-
+        AddGaussianNoiseSNR(snr=6),
+        PhasePerturbation(0.2),
+        TimeShift(512),
+        RandomChunkShuffle(30),
+        RandomCrop([5], 100),
+        RandomScaled((0.5, 1.5)),
     ]
     sec_augmentation = [
-        DA.data_augmentations.AddGaussianNoiseSNR(snr=6),
-        DA.data_augmentations.RandomChunkShuffle(20),
-        DA.data_augmentations.RandomCrop([ 5,6,7], 100),
-        DA.data_augmentations.RandomScaled((0.5, 1.5)),
-        DA.data_augmentations.RandomAbs(),
-        DA.data_augmentations.RandomVerticalFlip()
+        AddGaussianNoiseSNR(snr=6),
+        RandomNormalize(),
+        PhasePerturbation(0.2),
+        RandomChunkShuffle(30),
+        RandomCrop([5], 100),
+        RandomScaled((0.5, 1.5)),
+        RandomAbs(),
+        RandomVerticalFlip(),
+        RandomReverse(),
 
-        # DA.data_augmentations.RandomChooseDA(
-        #     [
-        #         # DA.data_augmentations.GaussianWeightedMovingAverage(5, 1),
-        #         # DA.data_augmentations.GaussianWeightedMovingAverage(10, 1),
-        #         # DA.data_augmentations.GaussianWeightedMovingAverage(20, 1),
-        #     ]
-        # ),
     ]
     import data.ssv_data as ssv_data
     nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size)
@@ -251,7 +240,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args)
-        scheduler.step()
+        # scheduler.step()
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
             save_checkpoint({

@@ -9,11 +9,25 @@ from sklearn.manifold import TSNE
 from sklearn.datasets import load_digits
 
 from data import ssv_data
+from sklearn.cluster import KMeans
 import torch
 import os
 import torchvision.transforms as transforms
 os.chdir('../')
 import DA.data_augmentations
+
+
+def get_kmeans_labels(feature):
+    # 创建 KMeans 对象
+    n_clusters = 10  # 聚类数量
+    kmeans = KMeans(n_clusters=n_clusters, max_iter=300, random_state=42, verbose=1)
+
+    # 训练 KMeans
+    kmeans.fit(feature)
+    cluster_assignments = kmeans.labels_  # 每个样本的聚类标签
+    return cluster_assignments
+
+
 # 创建 t-SNE 模型
 tsne = TSNE(n_components=2, perplexity=30, n_iter=300, random_state=42)
 
@@ -35,7 +49,7 @@ import models.Resnet1d as resnet
 import models.costumed_model as costumed_model
 model = costumed_model.StackedCNNEncoderWithPooling(num_classes=64)
 
-pretrained_model = r"C:\Users\bobobob\Desktop\1D-CNN-for-CWRU-master\checkpoints\checkpoint_0799.pth.tar"
+pretrained_model = r"C:\Users\bobobob\Desktop\1D-CNN-for-CWRU-master\checkpoints\checkpoint_0579.pth.tar"
 for name, param in model.named_parameters():
     if name not in ['fc.weight', 'fc.bias']:
         param.requires_grad = True
@@ -62,8 +76,10 @@ X = model.forward_without_fc(X).to('cpu').detach().numpy()
 # 降维
 X_tsne = tsne.fit_transform(X)
 
+labels = get_kmeans_labels(X_tsne)
+
 plt.figure(figsize=(10, 8))
-scatter = plt.scatter(X_tsne[:, 0], X_tsne[:, 1], c=y, cmap='tab10', s=10)
+scatter = plt.scatter(X_tsne[:, 0], X_tsne[:, 1], c=labels, cmap='tab10', s=10)
 plt.colorbar(scatter, label='Classes')
 plt.title("t-SNE Visualization")
 plt.xlabel("t-SNE Dimension 1")
@@ -94,3 +110,5 @@ plt.show()
 #
 # plt.tight_layout()
 # plt.show()
+
+

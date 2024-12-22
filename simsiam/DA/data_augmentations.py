@@ -51,11 +51,13 @@ class RandomCrop(torch.nn.Module):
         :param signal: 输入音频波形，形状 [channels, time]
         :return: 随机裁剪后的音频信号
         """
-        intervals = self.generate_random_intervals(0, len(signal), self.crop_size_set[random.randint(0, len(self.crop_size_set)-1)], self.times)
+        intervals = self.generate_random_intervals(0, len(signal)-1, self.crop_size_set[random.randint(0, len(self.crop_size_set)-1)], self.times)
         for i in range(self.times):
             start, end = intervals[i][0], intervals[i][1]
+            # signal[start:end] = (signal[start] + signal[end]) * 0.5
             signal[start:end] = 0
         return signal
+
 
 
 
@@ -329,3 +331,90 @@ class RandomChunkShuffle(torch.nn.Module):
         shuffled_signal = np.concatenate(chunks)
 
         return shuffled_signal
+
+class RandomReverse(torch.nn.Module):
+    def __init__(self, p=0.5):
+        """
+        随机反转音频信号
+        :param p: 反转的概率
+        """
+        super().__init__()
+        self.p = p
+
+    def forward(self, signal):
+        if random.random() < self.p:
+            return signal[::-1].copy()
+        return signal
+
+
+
+class RandomNormalize(torch.nn.Module):
+    def __init__(self, norm_range=(0.5, 1.5)):
+        """
+        随机归一化信号
+        :param norm_range: 归一化范围 (min, max)
+        """
+        super().__init__()
+        self.norm_range = norm_range
+
+    def forward(self, signal):
+        if random.random() < 0.5:
+            norm_factor = np.random.uniform(self.norm_range[0], self.norm_range[1])
+            return signal / np.max(np.abs(signal)) * norm_factor
+        return signal
+
+
+class PhasePerturbation(torch.nn.Module):
+    def __init__(self, max_perturb=0.1):
+        """
+        随机扰动相位
+        :param max_perturb: 最大扰动幅度 (弧度)
+        """
+        super().__init__()
+        self.max_perturb = max_perturb
+
+    def forward(self, signal):
+        fft_signal = np.fft.fft(signal)
+        phase = np.angle(fft_signal)
+        magnitude = np.abs(fft_signal)
+
+        # 添加随机相位扰动
+        perturbed_phase = phase + np.random.uniform(-self.max_perturb, self.max_perturb, size=phase.shape)
+        perturbed_fft = magnitude * np.exp(1j * perturbed_phase)
+        return np.fft.ifft(perturbed_fft).real
+
+
+from scipy.interpolate import interp1d
+
+class RandomFrequencyWarp(torch.nn.Module):
+    def __init__(self, warp_factor_range=(0.9, 1.1)):
+        """
+        随机频率扭曲
+        :param warp_factor_range: 扭曲因子范围
+        """
+        super().__init__()
+        self.warp_factor_range = warp_factor_range
+
+    def forward(self, signal):
+        warp_factor = np.random.uniform(self.warp_factor_range[0], self.warp_factor_range[1])
+        original_indices = np.arange(len(signal))
+        # 确保 warped_indices 和 signal 的长度一致
+        warped_indices = np.linspace(0, len(signal) - 1, len(signal))
+        warped_signal = interp1d(warped_indices * warp_factor, signal, kind='linear', fill_value="extrapolate")
+        return warped_signal(original_indices)
+
+
+class RandomlyAct(torch.nn.Module):
+    def __init__(self, func, p=0.5):
+        """
+        随机反转音频信号
+        :param p: 反转的概率
+        """
+        super().__init__()
+        self.p = p
+        self.func = func
+
+    def forward(self, signal):
+        if random.random() < self.p:
+            return self.func(signal)
+        return signal
