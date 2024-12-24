@@ -20,7 +20,7 @@ import DA.data_augmentations
 def get_kmeans_labels(feature):
     # 创建 KMeans 对象
     n_clusters = 10  # 聚类数量
-    kmeans = KMeans(n_clusters=n_clusters, max_iter=300, random_state=42, verbose=1)
+    kmeans = KMeans(n_clusters=n_clusters, max_iter=300, random_state=42, verbose=0)
 
     # 训练 KMeans
     kmeans.fit(feature)
@@ -49,7 +49,7 @@ import models.Resnet1d as resnet
 import models.costumed_model as costumed_model
 model = costumed_model.StackedCNNEncoderWithPooling(num_classes=64)
 
-pretrained_model = r"C:\Users\bobobob\Desktop\1D-CNN-for-CWRU-master\checkpoints\checkpoint_0579.pth.tar"
+pretrained_model = r"C:\Users\bobobob\Desktop\1D-CNN-for-CWRU-master\checkpoints\deepcluster\checkpoint_0199.pth.tar"
 for name, param in model.named_parameters():
     if name not in ['fc.weight', 'fc.bias']:
         param.requires_grad = True
@@ -58,14 +58,22 @@ checkpoint = torch.load(pretrained_model, map_location="cpu")
 
 # rename moco pre-trained keys
 state_dict = checkpoint['state_dict']
-for k in list(state_dict.keys()):
-    # retain only encoder up to before the embedding layer
-    if k.startswith('encoder') and not k.startswith('encoder.fc'):
-        # remove prefix
-        state_dict[k[len("encoder."):]] = state_dict[k]
-    # delete renamed or unused k
-    del state_dict[k]
+if checkpoint['arch'] != 'deepcluster':
+    for k in list(state_dict.keys()):
+        # retain only encoder up to before the embedding layer
+        if k.startswith('encoder.') and not k.startswith('encoder.fc'):
+            if k.startswith('encoder.encoder'):
+                state_dict[k[len("encoder."):]] = state_dict[k]
+            else:
+                state_dict[k[len("encoder."):]] = state_dict[k]
+        # delete renamed or unused k
+        del state_dict[k]
+else:
+    for k in list(state_dict.keys()):
+        if not k.startswith('encoder.'):
+            del state_dict[k]
 msg = model.load_state_dict(state_dict, strict=False)
+print("missing keys:", set(msg.missing_keys))
 # assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model = model.to(device)
@@ -79,36 +87,9 @@ X_tsne = tsne.fit_transform(X)
 labels = get_kmeans_labels(X_tsne)
 
 plt.figure(figsize=(10, 8))
-scatter = plt.scatter(X_tsne[:, 0], X_tsne[:, 1], c=labels, cmap='tab10', s=10)
+scatter = plt.scatter(X_tsne[:, 0], X_tsne[:, 1], c=y, cmap='tab10', s=10)
 plt.colorbar(scatter, label='Classes')
 plt.title("t-SNE Visualization")
 plt.xlabel("t-SNE Dimension 1")
 plt.ylabel("t-SNE Dimension 2")
 plt.show()
-
-# X = ts_dataset.X
-# # 从每个类别中选取一个样本
-# unique_labels = np.unique(y)
-# selected_signals = []
-# selected_labels = []
-#
-# for label in unique_labels:
-#     # 按标签筛选，选第一个匹配的样本
-#     idx = np.where(y == label)[0][0]
-#     selected_signals.append(X[idx])
-#     selected_labels.append(label)
-#
-# # 绘制选中的信号
-# plt.figure(figsize=(12, 6))
-# for i, (signal, label) in enumerate(zip(selected_signals, selected_labels)):
-#     plt.subplot(1, len(unique_labels), i + 1)
-#     plt.plot(signal)
-#     plt.title(f"Label: {label}")
-#     plt.xlabel("Time")
-#     plt.ylabel("Amplitude")
-#     plt.grid(True)
-#
-# plt.tight_layout()
-# plt.show()
-
-

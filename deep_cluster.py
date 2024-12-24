@@ -16,6 +16,7 @@ import faiss
 import numpy as np
 from sklearn.metrics.cluster import normalized_mutual_info_score
 import torch
+import shutil
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
@@ -24,6 +25,7 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
+from simsiam.DA.data_augmentations import *
 import clustering
 import models
 from utils import AverageMeter, Logger, UnifLabelSampler
@@ -34,15 +36,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description='PyTorch Implementation of DeepCluster')
 
     parser.add_argument('--pretrained_model', metavar='DIR', help='path to dataset', default=r"C:\Users\bobobob\Desktop\1D-CNN-for-CWRU-master\checkpoints\checkpoint_0500.pth.tar")
-    parser.add_argument('--arch', '-a', type=str, metavar='ARCH',
-                        choices=['alexnet', 'vgg16'], default='alexnet',
+    parser.add_argument('--arch', '-a', type=str, metavar='ARCH', default='deepcluster',
                         help='CNN architecture (default: alexnet)')
     parser.add_argument('--sobel', action='store_true', help='Sobel filtering')
     parser.add_argument('--clustering', type=str, choices=['Kmeans', 'PIC'],
                         default='Kmeans', help='clustering algorithm (default: Kmeans)')
     parser.add_argument('--nmb_cluster', '--k', type=int, default=10000,
                         help='number of cluster for k-means (default: 10000)')
-    parser.add_argument('--lr', default=0.0005, type=float,
+    parser.add_argument('--lr', default=0.000005, type=float,
                         help='learning rate (default: 0.05)')
     parser.add_argument('--wd', default=-5, type=float,
                         help='weight decay pow (default: -5)')
@@ -79,7 +80,7 @@ def parse_args():
 def main(args):
     # fix random seeds
     args.verbose = True
-    # args.tsne = True
+    args.tsne = True
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
     np.random.seed(args.seed)
@@ -135,8 +136,20 @@ def main(args):
     end = time.time()
 
     import data.ssv_data as ssv_data
+    augmentation = [
+        AddGaussianNoiseSNR(snr=6),
+        RandomNormalize(),
+        PhasePerturbation(0.2),
+        RandomChunkShuffle(30),
+        RandomCrop([5], 100),
+        RandomScaled((0.5, 1.5)),
+        RandomAbs(),
+        RandomVerticalFlip(),
+        RandomReverse(),
+
+    ]
     nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size)
-    dataset = nonLabelCWRUData.get_ssv()
+    dataset = nonLabelCWRUData.get_ssv(transforms.Compose(augmentation))
 
     if args.verbose:
         print('Load dataset: {0:.2f} s'.format(time.time() - end))
@@ -175,7 +188,7 @@ def main(args):
         train_dataloader = torch.utils.data.DataLoader(
             dataset,
             batch_size=args.batch,
-            sampler=sampler,
+            # sampler=sampler,
             pin_memory=True,
         )
 
@@ -210,14 +223,15 @@ def main(args):
             print('####################### \n')
 
         # save running checkpoint
-        torch.save({'epoch': epoch + 1,
-                    'arch': args.arch,
-                    'state_dict': model.state_dict(),
-                    'optimizer' : optimizer.state_dict()},
-                   os.path.join(args.exp, 'checkpoint.pth.tar'))
+        save_checkpoint({
+            'epoch': epoch + 1,
+            'arch': args.arch,
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+        }, is_best=False, filename='checkpoints/deepcluster/checkpoint_{:04d}.pth.tar'.format(epoch))
 
 
-        if args.tsne and epoch % 10 == 0:
+        if args.tsne and (epoch+1) % 50 == 0:
             create_tsne(features, kmeans_labels)
         # save cluster assignments
         # cluster_log.log(deepcluster.images_lists)
@@ -327,7 +341,7 @@ def create_tsne(features, labels):
 def get_kmeans_labels(feature):
     # 创建 KMeans 对象
     n_clusters = 10  # 聚类数量
-    kmeans = KMeans(n_clusters=n_clusters, max_iter=300, random_state=42, verbose=1)
+    kmeans = KMeans(n_clusters=n_clusters, max_iter=300, random_state=42, verbose=0)
 
     # 训练 KMeans
     kmeans.fit(feature)
@@ -335,6 +349,11 @@ def get_kmeans_labels(feature):
     inertia = kmeans.inertia_
     return cluster_assignments, inertia
 
+
+def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+    torch.save(state, filename)
+    if is_best:
+        shutil.copyfile(filename, 'model_best.pth.tar')
 
 if __name__ == '__main__':
     args = parse_args()

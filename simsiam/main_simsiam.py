@@ -202,7 +202,7 @@ def main_worker(gpu, ngpus_per_node, args):
     # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
     augmentation = [
         AddGaussianNoiseSNR(snr=6),
-        PhasePerturbation(0.2),
+        # PhasePerturbation(0.2),
         TimeShift(512),
         RandomChunkShuffle(30),
         RandomCrop([5], 100),
@@ -218,7 +218,6 @@ def main_worker(gpu, ngpus_per_node, args):
         RandomAbs(),
         RandomVerticalFlip(),
         RandomReverse(),
-
     ]
     import data.ssv_data as ssv_data
     nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size)
