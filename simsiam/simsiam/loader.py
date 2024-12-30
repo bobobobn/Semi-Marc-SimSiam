@@ -24,6 +24,22 @@ class TwoCropsTransform:
         return [q, k]
 
 
+class MultiCropsTransform:
+    """Take two random crops of one image as the query and key."""
+
+    def __init__(self, base_transform, sec_transform = None):
+        self.base_transform = base_transform
+        self.sec_transform = sec_transform
+
+    def __call__(self, x):
+        q = self.base_transform(x)
+        if self.sec_transform is not None:
+            k1, k2 = self.sec_transform(x), self.sec_transform(x)
+        else:
+            k1, k2 = self.base_transform(x), self.base_transform(x)
+        return [q, k1, k2]
+
+
 class GaussianBlur(object):
     """Gaussian blur augmentation in SimCLR https://arxiv.org/abs/2002.05709"""
 

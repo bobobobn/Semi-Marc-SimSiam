@@ -49,7 +49,7 @@ import models.Resnet1d as resnet
 import models.costumed_model as costumed_model
 model = costumed_model.StackedCNNEncoderWithPooling(num_classes=64)
 
-pretrained_model = r"C:\Users\bobobob\Desktop\1D-CNN-for-CWRU-master\checkpoints\deepcluster\checkpoint_0199.pth.tar"
+pretrained_model = r"C:\Users\bobobob\Desktop\1D-CNN-for-CWRU-master\checkpoints\checkpoint_0500.pth.tar"
 for name, param in model.named_parameters():
     if name not in ['fc.weight', 'fc.bias']:
         param.requires_grad = True

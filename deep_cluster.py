@@ -41,9 +41,9 @@ def parse_args():
     parser.add_argument('--sobel', action='store_true', help='Sobel filtering')
     parser.add_argument('--clustering', type=str, choices=['Kmeans', 'PIC'],
                         default='Kmeans', help='clustering algorithm (default: Kmeans)')
-    parser.add_argument('--nmb_cluster', '--k', type=int, default=10000,
+    parser.add_argument('--nmb_cluster', '--k', type=int, default=25,
                         help='number of cluster for k-means (default: 10000)')
-    parser.add_argument('--lr', default=0.000005, type=float,
+    parser.add_argument('--lr', default=0.001, type=float,
                         help='learning rate (default: 0.05)')
     parser.add_argument('--wd', default=-5, type=float,
                         help='weight decay pow (default: -5)')
@@ -80,7 +80,7 @@ def parse_args():
 def main(args):
     # fix random seeds
     args.verbose = True
-    args.tsne = True
+    # args.tsne = True
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
     np.random.seed(args.seed)
@@ -89,7 +89,7 @@ def main(args):
     if args.verbose:
         print('Architecture: {}'.format(args.arch))
     import models.costumed_model as costumed_model
-    model = costumed_model.StackedCNNEncoderWithPooling(num_classes=10)
+    model = costumed_model.StackedCNNEncoderWithPooling(num_classes=args.nmb_cluster)
     fd = int(model.num_classes)
     # model.fc = None
     model.cuda()
@@ -175,7 +175,7 @@ def main(args):
         # cluster the features
         if args.verbose:
             print('Cluster the features')
-        kmeans_labels, cluster_loss = get_kmeans_labels(features)
+        kmeans_labels, cluster_loss = get_kmeans_labels(features, args.nmb_cluster)
         # assign pseudo-labels
         if args.verbose:
             print('Assign pseudo labels')
@@ -338,9 +338,8 @@ def create_tsne(features, labels):
     plt.show()
 
 
-def get_kmeans_labels(feature):
+def get_kmeans_labels(feature, n_clusters=10):
     # 创建 KMeans 对象
-    n_clusters = 10  # 聚类数量
     kmeans = KMeans(n_clusters=n_clusters, max_iter=300, random_state=42, verbose=0)
 
     # 训练 KMeans
