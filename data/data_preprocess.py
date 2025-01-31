@@ -42,6 +42,25 @@ class CWRUdata(data.Dataset):
         return sample, label
 
 
+class SemiSupervisedImbalanceCWRU(data.Dataset):
+    def __init__(self, train_set, ssv_set, omega = 0.9, transform=None):
+        self.X = np.vstack((train_set.X, ssv_set.X))
+        self.y = np.concatenate((train_set.y, ssv_set.y))
+        self.omega = np.ones(len(self.y))
+        self.omega[len(train_set.y):] *= omega
+        self.transform = transform
+    def __len__(self):
+        return self.X.shape[0]
+
+    def __getitem__(self, idx):
+        sample = self.X[idx]
+        label = self.y[idx]
+        omega = self.omega[idx]
+        # Apply transformation if available
+        if self.transform is not None:
+            sample = self.transform(sample)
+
+        return sample, label, omega
 '''以下5个函数构造长尾分布数据集用的，直接看create_cwru_dataset()'''
 
 
@@ -115,6 +134,25 @@ def get_imb_data(signals, labels, excep_num, normal_num):
     X_train, X_test, Y_train, Y_test = split_dataset(signals, labels, num_samples_per_class)
     return X_test, Y_test
 
+def get_imb_data_beta(signals, labels, beta, total_sample=100):
+    def split_dataset(X, Y, num_samples_per_class, random_state=42):
+        if random_state is not None:
+            np.random.seed(random_state)
+
+        test_indices = []
+        train_indices = []
+        for label, num_samples in enumerate(num_samples_per_class):
+            class_indices = np.where(Y == label)[0]
+            # 随机选取指定数量的样本索引作为测试集
+            test_indices.extend(np.random.choice(class_indices, size=num_samples, replace=False))
+            # 剩余的作为训练集
+            train_indices.extend([idx for idx in class_indices if idx not in test_indices])
+        return X[train_indices], X[test_indices], Y[train_indices], Y[test_indices]
+    import utils
+    num_samples_per_class = utils.pareto_sample(total_sample=total_sample, class_num=(labels.max() + 1), beta=beta)
+
+    X_train, X_test, Y_train, Y_test = split_dataset(signals, labels, num_samples_per_class)
+    return X_test, Y_test
 
 def create_knowledge_label(ssv_x):
     feature = []
@@ -399,9 +437,9 @@ def create_base_dataset(file_name, train_frac, dim):
                 labels_tt.append(frame['label'][idx] * np.ones(test_num))
 
     signals_tr_np = np.concatenate(signals_tr).squeeze()
-    labels_tr_np = np.concatenate(np.array(labels_tr)).astype('uint8')
+    labels_tr_np = np.concatenate([arr for arr in labels_tr]).astype('uint8')
     signals_tt_np = np.concatenate(signals_tt).squeeze()
-    labels_tt_np = np.concatenate(np.array(labels_tt)).astype('uint8')
+    labels_tt_np = np.concatenate([arr for arr in labels_tt]).astype('uint8')
     return signals_tr_np, labels_tr_np, signals_tt_np, labels_tt_np
 
 

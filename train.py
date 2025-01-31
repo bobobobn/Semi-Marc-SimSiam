@@ -27,222 +27,300 @@ import gModel
 import dModel
 from matplotlib import pyplot as plt
 from tsne import plot_tsne
-from imblearn.over_sampling import SMOTE
-from data import data_preprocess, alfaDataProcess
+from data import data_preprocess
 from models import costumed_model
 from data import ssv_data
+import math
+import random
 
-# tr_dataset = alfaDataProcess.create_alfa_dataset(train=True, ssv_size=100, imbalance_factor=5)
-# val_dataset = alfaDataProcess.create_alfa_dataset(train=False, ssv_size=100, imbalance_factor=5)
+import torch.backends.cudnn as cudnn
 
-learingRate = 0.001
-epochs = 50
-import simsiam.DA.data_augmentations as data_augmentations
+import argparse
 
+parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
+parser.add_argument('--epochs', default=70, type=int, metavar='N',
+                    help='number of total epochs to run')
+parser.add_argument('--pretrained_model', metavar='DIR', help='path to dataset',
+                    default=r"checkpoints\simsiamwopred\checkpoint_0499.pth.tar")
+parser.add_argument('--pretrained', action='store_true', default=True)
+parser.add_argument('-b', '--batch-size', default=32, type=int,
+                    metavar='N',
+                    help='mini-batch size (default: 32), this is the total '
+                         'batch size of all GPUs on the current node when '
+                         'using Data Parallel or Distributed Data Parallel')
+parser.add_argument('--lr', '--learning-rate', default=0.05, type=float,
+                    metavar='LR', help='initial (base) learning rate', dest='lr')
+parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
+                    help='momentum of SGD solver')
+parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
+                    metavar='W', help='weight decay (default: 1e-4)',
+                    dest='weight_decay')
+parser.add_argument('-p', '--print-freq', default=30, type=int,
+                    metavar='N', help='print frequency (default: 10)')
+parser.add_argument('--seed', default=None, type=int,
+                    help='seed for initializing training. ')
+parser.add_argument('--gpu', default=0, type=int,
+                    help='GPU id to use.')
+parser.add_argument('--ssv_size', default=100, type=int,
+                    help='ssv_set size (default: 200)')
+parser.add_argument('--normal_size', default=100, type=int,
+                    help='normal_size size (default: 200)')
+parser.add_argument('--excep_size', default=10, type=int,
+                    help='excep_size size (default: 200)')
+parser.add_argument('--num_classes', default=10, type=int,
+                    help='excep_size size (default: 200)')
 
-augmentation = [
-    data_augmentations.TimeShift(256),
-    data_augmentations.RandomCrop(100),
-    data_augmentations.AddGaussianNoise(),
-    # DA.data_augmentations.WeightedMovingAverage,
-    data_augmentations.GaussianWeightedMovingAverage(5, 1),
-]
 import data.ssv_data as ssv_data
 import torchvision.transforms as transforms
 
-nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=100, normal_size=100, excep_size=100)
-tr_dataset = nonLabelCWRUData.get_train()
-val_dataset = nonLabelCWRUData.get_test()
+def main():
+    args = parser.parse_args()
+    if args.seed is not None:
+        random.seed(args.seed)
+        torch.manual_seed(args.seed)
+        cudnn.deterministic = True
+    use_cuda = torch.cuda.is_available()
+    if use_cuda:
+        print('CUDA is available')
+    betas = [1, 2, 5, 10, 50, 100]
+    results = []
+    loop = 5
+    for beta in betas:
+        acc = 0
+        nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size, beta=beta)
+        for i in range(loop):
+            model = costumed_model.StackedCNNEncoderWithPooling(num_classes=args.num_classes)
+            '''
+                1.用labeled dataset微调model
+                2.用model预测unlabeled dataset
+                3.用λ(unlabeled dataset) & (labeled dataset)微调model
+            '''
+            acc += train(model, nonLabelCWRUData.get_train(), nonLabelCWRUData.get_test(), args)
+        acc /= loop
+        results.append({"beta":beta, "acc":acc})
+        print(results)
 
-pretrained = False
-pretrained_model = r"C:\Users\bobobob\Desktop\1D-CNN-for-CWRU-master\checkpoints\checkpoint_0199.pth.tar"
-# original_data = ssv_data.DataBase(ssv_size=200, normal_size=200, excep_size=200)
+def search_augment(policies, args):
+    nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size)
+    import cma
+    import numpy as np
 
-# tr_dataset = original_data.get_train()
-# tr_dataset = data_preprocess.create_cwru_dataset(train=True, ssv_size=100, excep_num=500, normal_num=500, train_frac=0.8)
-tr_loader = DataLoader(tr_dataset, batch_size=opt.batch_size, shuffle=True)
-# val_dataset = original_data.get_test()
-# val_dataset = data_preprocess.create_cwru_dataset(train=False,train_frac=0.8)
-val_loader = DataLoader(val_dataset, batch_size=opt.batch_size, shuffle=True)
-print('#training num = %d' % len(tr_dataset))
+    for k in range(len(policies)):
+        # 问题维度
+        dim = 2  # 变量的维度
+        # 初始化参数
+        initial_solution = np.random.uniform(0, 10, dim)  # 初始解在 [0, 10] 之间
+        sigma = 2.0  # 初始步长
+        options = {
+            'popsize': 4 + int(3 * np.log(dim)),  # 种群规模
+            'bounds': [0, 10],  # 变量边界
+            'maxiter': 10,  # 最大迭代次数
+        }
 
-# print('#val num = %d' % len(val_dataset))
-# model = costumed_model.CNN_Alfa(feature_num=24, class_num=9)
-# model = costumed_model.CNN_Fine(class_num=6, feature_num=32, fine_tune=True)
-# model = MLP.MLP()
-import models.Resnet1d as resnet
-# model = resnet.resnet18(num_classes=6)
-model = costumed_model.StackedCNNEncoderWithPooling(num_classes=10)
-# model = Alexnet1d.alexnet()
-# model = BiLSTM1d.BiLSTM()
-# model = LeNet1d.LeNet()
-writer = SummaryWriter(comment=str(opt.model_param['kernel_num1'])+'_'+
-                       str(opt.model_param['kernel_num2']))
+        # 创建CMA-ES优化器
+        es = cma.CMAEvolutionStrategy(initial_solution, sigma, options)
 
-total_steps = 0
-#选择优化器
-# optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()),
-#                            lr=learingRate)
-# scheduler = torch.optim.lr_scheduler.StepLR(optimizer, opt.lr_decay_iters,
-#                                             opt.lr_decay)  # regulation rate decay
+        # 优化过程
+        while not es.stop():
+            solutions = es.ask()  # 生成连续解
+            fitnesses = []  # 评估适应度
+            for x in solutions:
+                subpolicies = []
+                policy = policies[k]
+                scale = x[0]
+                p = x[1]
+                if not policy.need_p():
+                    p=1.0
+                subpolicies.append(policy.get_entity(scale, p))
+                tr_dataset = nonLabelCWRUData.get_train(transforms.Compose(subpolicies))
+                model = costumed_model.StackedCNNEncoderWithPooling(num_classes=args.num_classes)
+                val_dataset = nonLabelCWRUData.get_test()
+                cluster_score = train(model, tr_dataset, val_dataset, args)
+                fitnesses.append(-cluster_score)
+            es.tell(solutions, fitnesses)  # 更新CMA-ES参数
+            es.logger.add()
+            es.disp()
+        # 优化结果
+        best_solution = es.result.xbest
+        best_fitness = es.result.fbest
+        with open("result.txt", 'a') as file:
+            file.write(f"policy {k}: best_solution:{best_solution}, acc: {best_fitness}\n")
 
-# Define the optimizer
+def train(model, tr_dataset, val_dataset, args):
+    epochs = args.epochs
+    pretrained = args.pretrained
+    pretrained_model = args.pretrained_model
+    tr_loader = DataLoader(tr_dataset, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True)
+    print('#training num = %d' % len(tr_dataset))
 
-from torch.optim.lr_scheduler import ExponentialLR
-initial_lr = 0.05
-optimizer = torch.optim.SGD(model.parameters(), lr=initial_lr)
+    writer = SummaryWriter(comment=str(opt.model_param['kernel_num1'])+'_'+
+                           str(opt.model_param['kernel_num2']))
 
-# Define the exponential decay scheduler
-gamma = 0.95  # Decay factor
-scheduler = ExponentialLR(optimizer, gamma=gamma)
+    total_steps = 0
+    from torch.optim.lr_scheduler import ExponentialLR
+
+    init_lr = 0.05 * opt.batch_size / 256
+    optimizer = torch.optim.SGD(model.parameters(),
+                                lr=init_lr,
+                                momentum=0.9,
+                                weight_decay=1e-4)
+
+    # Define the exponential decay scheduler
+    gamma = 0.95  # Decay factor
+    scheduler = ExponentialLR(optimizer, gamma=gamma)
 
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-#导入模型
+    class_counts = torch.zeros(args.num_classes)
+    for _, label in tr_dataset:
+        class_counts[label] += 1
 
-#损失函数BCELoss - 不包含sigmoid
-loss_fn = torch.nn.CrossEntropyLoss()
+    from models.costumed_model import ClassBalancedLoss
+    loss_fn = ClassBalancedLoss(class_counts)
 
-###==============training=================###
-
-use_cuda = torch.cuda.is_available()
-if use_cuda:
-    print('CUDA is available') 
-device = torch.device(opt.device if use_cuda else "cpu")
-model = model.to(device)
-#summary(model, (1,2048))
-# save best_model wrt. val_acc
-best_model_wts = copy.deepcopy(model.state_dict())
-best_acc = 0.0
-# one epoch
-data_loss = []
-val_acc_list = []
-
-if pretrained:
-    # checkpoint = torch.load(pretrained_model, map_location=torch.device(f'cuda:0'))
-    # from collections import OrderedDict
-    # new_state_dict = OrderedDict()
-    # for k, v in checkpoint['state_dict'].items():
-    #     # if 'linear' not in k and 'fc' not in k:
-    #     new_state_dict[k] = v
-    # model.load_state_dict(new_state_dict, strict=False)
-    # print(f'===> Pretrained weights found in total: [{len(list(new_state_dict.keys()))}]')
-
-    for name, param in model.named_parameters():
-        if not name.startswith('fc'):
-            param.requires_grad = True
-    print("=> loading checkpoint '{}'".format(pretrained_model))
-    checkpoint = torch.load(pretrained_model, map_location="cpu")
-
-    # rename moco pre-trained keys
-    state_dict = checkpoint['state_dict']
-    for k in list(state_dict.keys()):
-        # retain only encoder up to before the embedding layer
-        if k.startswith('encoder') and not k.startswith('encoder.fc'):
-            # remove prefix
-            state_dict[k[len("encoder."):]] = state_dict[k]
-        # delete renamed or unused k
-        del state_dict[k]
-    msg = model.load_state_dict(state_dict, strict=False)
-    # assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
+    ###==============training=================###
     model = model.to(device)
+    best_model_wts = copy.deepcopy(model.state_dict())
+    best_acc = 0.0
+    # one epoch
+    data_loss = []
+    val_acc_list = []
 
+    if pretrained:
+        for name, param in model.named_parameters():
+            if not name.startswith('fc'):
+                param.requires_grad = False
+        print("=> loading checkpoint '{}'".format(pretrained_model))
+        checkpoint = torch.load(pretrained_model, map_location="cpu")
 
-for epoch in range(epochs):
-    t0 = time.time()
-    print('Starting epoch %d / %d' % (epoch + 1, epochs))
-    optimizer.step()
-    scheduler.step()
-    # set train model or val model for BN and Dropout layers
-    model.train()
-    # one batch
-    for t, (x, y) in enumerate(tr_loader):
-        # add one dim to fit the requirements of conv1d layer
-        x.resize_(x.size()[0], 1, x.size()[1]) 
-        x, y = x.float(), y.long()
-        x, y = x.to(device), y.to(device)
-        # loss and predictions
-        scores = model(x)
-        loss = loss_fn(scores, y)
-        data_loss.append(loss.to("cpu").detach().numpy())
-        writer.add_scalar('loss', loss.item())
-        # print and save loss per 'print_every' times
-        if (t + 1) % opt.print_every == 0:
-            print('t = %d, loss = %.4f' % (t + 1, loss.item()))
-        # parameters update
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()           
-    # save epoch loss and acc to train or val history
-    train_acc, _= check_accuracy(model, tr_loader, device)
+        # rename moco pre-trained keys
+        state_dict = checkpoint['state_dict']
+        for k in list(state_dict.keys()):
+            # retain only encoder up to before the embedding layer
+            if k.startswith('encoder') and not k.startswith('encoder.fc'):
+                # remove prefix
+                state_dict[k[len("encoder."):]] = state_dict[k]
+            # delete renamed or unused k
+            del state_dict[k]
+        msg = model.load_state_dict(state_dict, strict=False)
+        print(set(msg.missing_keys))
+        # assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
+        model = model.to(device)
+
+    for epoch in range(epochs):
+        t0 = time.time()
+        print('Starting epoch %d / %d' % (epoch + 1, epochs))
+        optimizer.step()
+        # scheduler.step()
+        # set train model or val model for BN and Dropout layers
+        model.train()
+        # one batch
+        for t, (x, y) in enumerate(tr_loader):
+            # add one dim to fit the requirements of conv1d layer
+            x.resize_(x.size()[0], 1, x.size()[1])
+            x, y = x.float(), y.long()
+            x, y = x.to(device), y.to(device)
+            # loss and predictions
+            scores = model(x)
+            loss = loss_fn(scores, y)
+            data_loss.append(loss.to("cpu").detach().numpy())
+            writer.add_scalar('loss', loss.item())
+            # print and save loss per 'print_every' times
+            if (t + 1) % opt.print_every == 0:
+                print('t = %d, loss = %.4f' % (t + 1, loss.item()))
+            # parameters update
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        adjust_learning_rate(optimizer, init_lr, epoch, epochs)
+        # save epoch loss and acc to train or val history
+        train_acc, _= check_accuracy(model, tr_loader, device)
+        val_acc, _= check_accuracy(model, val_loader, device)
+        val_acc_list.append(val_acc)
+        # writer acc and weight to tensorboard
+        writer.add_scalars('acc', {'train_acc': train_acc, 'val_acc': val_acc}, epoch)
+        for name, param in model.named_parameters():
+            writer.add_histogram(name, param.clone().cpu().data.numpy(), epoch)
+        # save the best model
+        if val_acc > best_acc:
+            best_acc = val_acc
+            best_model_wts = copy.deepcopy(model.state_dict())
+        t1 = time.time()
+        save_checkpoint({
+            'epoch': epoch + 1,
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'arch': "fine_tune"
+        }, is_best=False, filename='checkpoints/finetune/checkpoint_{:04d}.pth.tar'.format(epoch))
+
     val_acc, _= check_accuracy(model, val_loader, device)
-    val_acc_list.append(val_acc)
-    # writer acc and weight to tensorboard
-    writer.add_scalars('acc', {'train_acc': train_acc, 'val_acc': val_acc}, epoch)
-    for name, param in model.named_parameters():
-        writer.add_histogram(name, param.clone().cpu().data.numpy(), epoch)
-    # save the best model
-    if val_acc > best_acc:
-        best_acc = val_acc
-        best_model_wts = copy.deepcopy(model.state_dict())
-    t1 = time.time()
+    return val_acc
 
-import matplotlib.pyplot as plt
-from sklearn.manifold import TSNE
-tsne = TSNE(n_components=2, perplexity=30, n_iter=300, random_state=42)
-model = model.to(device)
-X = torch.tensor(val_dataset.X).float()
-X.resize_(X.size()[0], 1, X.size()[1])
-X = X.to(device)
-X = model.forward_without_fc(X).to('cpu').detach().numpy()
-# 降维
-X_tsne = tsne.fit_transform(X)
-y = val_dataset.y
-plt.figure(figsize=(10, 8))
-scatter = plt.scatter(X_tsne[:, 0], X_tsne[:, 1], c=y, cmap='tab10', s=10)
-plt.colorbar(scatter, label='Classes')
-plt.title("t-SNE Visualization")
-plt.xlabel("t-SNE Dimension 1")
-plt.ylabel("t-SNE Dimension 2")
-plt.show()
 
-plt.plot(range(len(data_loss)),data_loss)
-plt.xlabel(u'steps')
-plt.ylabel(u'loss')
-plt.show()
+def adjust_learning_rate(optimizer, init_lr, epoch, epochs):
+    """Decay the learning rate based on schedule"""
+    cur_lr = init_lr * 0.5 * (1. + math.cos(math.pi * epoch / epochs))
+    for param_group in optimizer.param_groups:
+        if 'fix_lr' in param_group and param_group['fix_lr']:
+            param_group['lr'] = init_lr
+        else:
+            param_group['lr'] = cur_lr
 
-plt.plot(range(len(val_acc_list)),val_acc_list)
-plt.xlabel(u'steps')
-plt.ylabel(u'val acc')
-plt.show()
-print('kernel num1: {}'.format(opt.model_param['kernel_num1']))
-print('kernel num2: {}'.format(opt.model_param['kernel_num2']))
-print('Best val Acc: {:4f}'.format(best_acc))
+def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+    import shutil
+    torch.save(state, filename)
+    if is_best:
+        shutil.copyfile(filename, 'model_best.pth.tar')
 
-# load best model weights
-model.load_state_dict(best_model_wts)
-val_acc, confuse_matrix = check_accuracy(model, val_loader, device, error_analysis=True)
-# write the confuse_matrix to Excel
-data_pd = pd.DataFrame(confuse_matrix)
-writer = pd.ExcelWriter('results\\confuse_matrix_rate.xlsx')
-data_pd.to_excel(writer)
-writer.save()
-writer.close()
-# save model in results dir
-model_save_path = 'results\\' + time.strftime('%Y%m%d%H%M_') + str(int(100*best_acc)) + '.pth'
-torch.save(model.state_dict(), model_save_path)
-print('best model is saved in: ', model_save_path)
+if __name__ == "__main__":
+    main()
 
-# 此段代码是一段模型训练代码，主要实现了以下功能：
+# import matplotlib.pyplot as plt
+# from sklearn.manifold import TSNE
+# tsne = TSNE(n_components=2, perplexity=30, n_iter=300, random_state=42)
+# model = model.to(device)
+# X = torch.tensor(val_dataset.X).float()
+# X.resize_(X.size()[0], 1, X.size()[1])
+# X = X.to(device)
+# X = model.forward_without_fc(X).to('cpu').detach().numpy()
+# # 降维
+# X_tsne = tsne.fit_transform(X)
+# y = val_dataset.y
+# plt.figure(figsize=(10, 8))
+# scatter = plt.scatter(X_tsne[:, 0], X_tsne[:, 1], c=y, cmap='tab10', s=10)
+# plt.colorbar(scatter, label='Classes')
+# plt.title("t-SNE Visualization")
+# plt.xlabel("t-SNE Dimension 1")
+# plt.ylabel("t-SNE Dimension 2")
+# plt.show()
 #
-# 1. 加载配置，创建训练集和验证集，创建模型，初始化优化器，定义损失函数，指定设备；
+# plt.plot(range(len(data_loss)),data_loss)
+# plt.xlabel(u'steps')
+# plt.ylabel(u'loss')
+# plt.show()
 #
-# 2. 使用Adam优化器和学习率衰减来训练模型，打印每个batch的损失，同时记录到Tensorboard中；
+# plt.plot(range(len(val_acc_list)),val_acc_list)
+# plt.xlabel(u'steps')
+# plt.ylabel(u'val acc')
+# plt.show()
+# print('kernel num1: {}'.format(opt.model_param['kernel_num1']))
+# print('kernel num2: {}'.format(opt.model_param['kernel_num2']))
+# print('Best val Acc: {:4f}'.format(best_acc))
 #
-# 3. 每个epoch结束后，计算验证集和训练集的准确率，并记录到Tensorboard中，比较验证集准确率，若最新准确率高于之前最高准确率，则保存最新模型；
-#
-# 4. 加载最佳模型，计算验证集准确率，并将混淆矩阵存储到Excel中，最后保存模型。
-
-
+# # load best model weights
+# model.load_state_dict(best_model_wts)
+# val_acc, confuse_matrix = check_accuracy(model, val_loader, device, error_analysis=True)
+# # write the confuse_matrix to Excel
+# data_pd = pd.DataFrame(confuse_matrix)
+# writer = pd.ExcelWriter('results\\confuse_matrix_rate.xlsx')
+# data_pd.to_excel(writer)
+# writer.save()
+# writer.close()
+# # save model in results dir
+# model_save_path = 'results\\' + time.strftime('%Y%m%d%H%M_') + str(int(100*best_acc)) + '.pth'
+# torch.save(model.state_dict(), model_save_path)
+# print('best model is saved in: ', model_save_path)
 

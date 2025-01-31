@@ -16,15 +16,55 @@ import torchvision.transforms as transforms
 os.chdir('../')
 import DA.data_augmentations
 
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.preprocessing import MinMaxScaler
+
+
+
+from sklearn.manifold import TSNE
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.preprocessing import MinMaxScaler
+
+def compute_kmeans_acc(y_pred, y_true):
+    import numpy as np
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import accuracy_score
+    from scipy.optimize import linear_sum_assignment
+    from sklearn.metrics import confusion_matrix
+    conf_matrix = confusion_matrix(y_true, y_pred, labels=np.unique(y_true))
+
+    # 使用匈牙利算法找到最佳匹配
+    row_ind, col_ind = linear_sum_assignment(-conf_matrix)  # 最大化匹配
+
+    # 根据最佳匹配调整预测标签
+    mapping = dict(zip(col_ind, row_ind))
+    y_pred_mapped = np.array([mapping[label] for label in y_pred])
+
+    # 计算准确率
+    accuracy = accuracy_score(y_true, y_pred_mapped)
+    print(f"Accuracy: {accuracy:.2f}")
+    return accuracy
 
 def get_kmeans_labels(feature):
-    # 创建 KMeans 对象
-    n_clusters = 10  # 聚类数量
+    # 数据标准化
+    scaler = MinMaxScaler()
+    normalized_feature = scaler.fit_transform(feature)
+
+    # 设置聚类数量
+    n_clusters = 10
     kmeans = KMeans(n_clusters=n_clusters, max_iter=300, random_state=42, verbose=0)
 
     # 训练 KMeans
-    kmeans.fit(feature)
+    kmeans.fit(normalized_feature)
     cluster_assignments = kmeans.labels_  # 每个样本的聚类标签
+    inertia = kmeans.inertia_
+
+    # 计算轮廓系数
+    silhouette_avg = silhouette_score(normalized_feature, cluster_assignments)
+    print(f"Silhouette Coefficient: {silhouette_avg}")
+
     return cluster_assignments
 
 
@@ -38,27 +78,18 @@ X = ts_dataset.X
 # for i in range(len(X)):
 #     X[i] = transforms.Compose([DA.data_augmentations.GaussianWeightedMovingAverage(10, 1)])(X[i])
 y = ts_dataset.y
-for i in range(len(y)):
-    l = y[i]
-    if l > 9:
-        y[i] = 10
-X = X[y != 10]
-y = y[y != 10]
 import models.Resnet1d as resnet
 # model = resnet.resnet18NOFc(num_classes=6)
 import models.costumed_model as costumed_model
 model = costumed_model.StackedCNNEncoderWithPooling(num_classes=64)
 
-pretrained_model = r"C:\Users\bobobob\Desktop\1D-CNN-for-CWRU-master\checkpoints\deepcluster\checkpoint_0199.pth.tar"
-for name, param in model.named_parameters():
-    if name not in ['fc.weight', 'fc.bias']:
-        param.requires_grad = True
+pretrained_model = r"checkpoints\simsiamwopred\checkpoint_0499.pth.tar"
 print("=> loading checkpoint '{}'".format(pretrained_model))
 checkpoint = torch.load(pretrained_model, map_location="cpu")
 
 # rename moco pre-trained keys
 state_dict = checkpoint['state_dict']
-if checkpoint['arch'] != 'deepcluster':
+if checkpoint['arch'] != 'fine_tune':
     for k in list(state_dict.keys()):
         # retain only encoder up to before the embedding layer
         if k.startswith('encoder.') and not k.startswith('encoder.fc'):
@@ -85,6 +116,7 @@ X = model.forward_without_fc(X).to('cpu').detach().numpy()
 X_tsne = tsne.fit_transform(X)
 
 labels = get_kmeans_labels(X_tsne)
+kmeans_acc = compute_kmeans_acc(labels, y)
 
 plt.figure(figsize=(10, 8))
 scatter = plt.scatter(X_tsne[:, 0], X_tsne[:, 1], c=y, cmap='tab10', s=10)

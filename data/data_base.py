@@ -5,20 +5,24 @@
 # @Software: PyCharm
 
 from data.data_preprocess import normalize, get_mean_data, train_set_split_ssv, get_imb_data, CWRUdata, create_base_dataset,\
-    create_knowledge_label, standardize
+    create_knowledge_label, standardize, get_imb_data_beta
 from DCAe1d import create_dcae_label
 import numpy as np
 
 
 class DataBase():
-    def __init__(self, train_frac=0.8, ssv_size=100, normal_size=100, excep_size=100):
+    def __init__(self, train_frac=0.8, ssv_size=100, normal_size=100, excep_size=100, beta=None):
         signals_tr_np, labels_tr_np, signals_tt_np, labels_tt_np = create_base_dataset(file_name='data/annotations.txt',\
                                                                                        train_frac=train_frac, dim=1024)
         # signals_tr_np, signals_tt_np = normalize(signals_tr_np, signals_tt_np)
         signals_tr_np, signals_tt_np = standardize(signals_tr_np, signals_tt_np)
         self.signals_tt_np, self.labels_tt_np = get_mean_data(signals_tt_np,labels_tt_np)
         signals_tr_np, labels_tr_np, self.ssv_set = train_set_split_ssv(signals_tr_np, labels_tr_np, ssv_size)
-        self.signals_tr_ssv, self.labels_tr_ssv = get_imb_data(signals_tr_np, labels_tr_np, excep_num=excep_size, normal_num=normal_size)
+        if beta is not None:
+            self.signals_tr_ssv, self.labels_tr_ssv = get_imb_data_beta(signals_tr_np, labels_tr_np, beta=beta)
+        else:
+            self.signals_tr_ssv, self.labels_tr_ssv = get_imb_data(signals_tr_np, labels_tr_np, normal_num=normal_size, excep_num=excep_size)
+
 
     def make_ssv_label(self):
         raise NotImplementedError("Subclass must implement this abstract method")

@@ -12,7 +12,7 @@ import time
 
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans
-import faiss
+# import faiss
 import numpy as np
 from sklearn.metrics.cluster import normalized_mutual_info_score
 import torch
@@ -29,9 +29,20 @@ from simsiam.DA.data_augmentations import *
 import clustering
 import models
 from utils import AverageMeter, Logger, UnifLabelSampler
-
+import math
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+def adjust_learning_rate(optimizer, init_lr, epoch, args):
+    """Decay the learning rate based on schedule"""
+    cur_lr = init_lr * 0.5 * (1. + math.cos(math.pi * epoch / args.epochs))
+    for param_group in optimizer.param_groups:
+        if 'fix_lr' in param_group and param_group['fix_lr']:
+            param_group['lr'] = init_lr
+        else:
+            param_group['lr'] = cur_lr
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='PyTorch Implementation of DeepCluster')
 
@@ -41,9 +52,9 @@ def parse_args():
     parser.add_argument('--sobel', action='store_true', help='Sobel filtering')
     parser.add_argument('--clustering', type=str, choices=['Kmeans', 'PIC'],
                         default='Kmeans', help='clustering algorithm (default: Kmeans)')
-    parser.add_argument('--nmb_cluster', '--k', type=int, default=10000,
+    parser.add_argument('--nmb_cluster', '--k', type=int, default=25,
                         help='number of cluster for k-means (default: 10000)')
-    parser.add_argument('--lr', default=0.000005, type=float,
+    parser.add_argument('--lr', default=0.005, type=float,
                         help='learning rate (default: 0.05)')
     parser.add_argument('--wd', default=-5, type=float,
                         help='weight decay pow (default: -5)')
@@ -52,11 +63,11 @@ def parse_args():
                         reassignments of clusters (default: 1)""")
     parser.add_argument('--workers', default=4, type=int,
                         help='number of data loading workers (default: 4)')
-    parser.add_argument('--epochs', type=int, default=200,
+    parser.add_argument('--epochs', type=int, default=500,
                         help='number of total epochs to run (default: 200)')
     parser.add_argument('--start_epoch', default=0, type=int,
                         help='manual epoch number (useful on restarts) (default: 0)')
-    parser.add_argument('--batch', default=256, type=int,
+    parser.add_argument('--batch_size', default=256, type=int,
                         help='mini-batch size (default: 256)')
     parser.add_argument('--momentum', default=0.9, type=float, help='momentum (default: 0.9)')
     parser.add_argument('--resume', default='', type=str, metavar='PATH',
@@ -80,7 +91,7 @@ def parse_args():
 def main(args):
     # fix random seeds
     args.verbose = True
-    args.tsne = True
+    # args.tsne = True
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
     np.random.seed(args.seed)
@@ -89,16 +100,16 @@ def main(args):
     if args.verbose:
         print('Architecture: {}'.format(args.arch))
     import models.costumed_model as costumed_model
-    model = costumed_model.StackedCNNEncoderWithPooling(num_classes=10)
+    model = costumed_model.StackedCNNEncoderWithPooling(num_classes=args.nmb_cluster)
     fd = int(model.num_classes)
     # model.fc = None
     model.cuda()
     cudnn.benchmark = True
-
+    init_lr = args.lr * args.batch_size / 256
     # create optimizer
     optimizer = torch.optim.SGD(
         filter(lambda x: x.requires_grad, model.parameters()),
-        lr=args.lr,
+        lr=init_lr,
         momentum=args.momentum,
         weight_decay=10**args.wd,
     )
@@ -110,19 +121,20 @@ def main(args):
     for name, param in model.named_parameters():
         if name not in ['fc.weight', 'fc.bias']:
             param.requires_grad = True
-    print("=> loading checkpoint '{}'".format(args.pretrained_model))
-    checkpoint = torch.load(args.pretrained_model, map_location="cpu")
 
-    # rename moco pre-trained keys
-    state_dict = checkpoint['state_dict']
-    for k in list(state_dict.keys()):
-        # retain only encoder up to before the embedding layer
-        if k.startswith('encoder') and not k.startswith('encoder.fc'):
-            # remove prefix
-            state_dict[k[len("encoder."):]] = state_dict[k]
-        # delete renamed or unused k
-        del state_dict[k]
-    msg = model.load_state_dict(state_dict, strict=False)
+    # print("=> loading checkpoint '{}'".format(args.pretrained_model))
+    # checkpoint = torch.load(args.pretrained_model, map_location="cpu")
+    #
+    # # rename moco pre-trained keys
+    # state_dict = checkpoint['state_dict']
+    # for k in list(state_dict.keys()):
+    #     # retain only encoder up to before the embedding layer
+    #     if k.startswith('encoder') and not k.startswith('encoder.fc'):
+    #         # remove prefix
+    #         state_dict[k[len("encoder."):]] = state_dict[k]
+    #     # delete renamed or unused k
+    #     del state_dict[k]
+    # msg = model.load_state_dict(state_dict, strict=False)
 
     # creating checkpoint repo
     exp_check = os.path.join(args.exp, 'checkpoints')
@@ -138,15 +150,14 @@ def main(args):
     import data.ssv_data as ssv_data
     augmentation = [
         AddGaussianNoiseSNR(snr=6),
-        RandomNormalize(),
-        PhasePerturbation(0.2),
-        RandomChunkShuffle(30),
-        RandomCrop([5], 100),
-        RandomScaled((0.5, 1.5)),
-        RandomAbs(),
-        RandomVerticalFlip(),
-        RandomReverse(),
-
+        # RandomNormalize(),
+        # PhasePerturbation(0.2),
+        # RandomChunkShuffle(30),
+        # RandomCrop([5], 100),
+        # RandomScaled((0.5, 1.5)),
+        # RandomAbs(),
+        # RandomVerticalFlip(),
+        # RandomReverse(),
     ]
     nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size)
     dataset = nonLabelCWRUData.get_ssv(transforms.Compose(augmentation))
@@ -155,7 +166,7 @@ def main(args):
         print('Load dataset: {0:.2f} s'.format(time.time() - end))
 
     dataloader = torch.utils.data.DataLoader(dataset,
-                                             batch_size=args.batch,
+                                             batch_size=args.batch_size,
                                              pin_memory=True)
 
     # clustering algorithm to use
@@ -175,7 +186,7 @@ def main(args):
         # cluster the features
         if args.verbose:
             print('Cluster the features')
-        kmeans_labels, cluster_loss = get_kmeans_labels(features)
+        kmeans_labels, cluster_loss = get_kmeans_labels(features, args.nmb_cluster)
         # assign pseudo-labels
         if args.verbose:
             print('Assign pseudo labels')
@@ -187,7 +198,7 @@ def main(args):
 
         train_dataloader = torch.utils.data.DataLoader(
             dataset,
-            batch_size=args.batch,
+            batch_size=args.batch_size,
             # sampler=sampler,
             pin_memory=True,
         )
@@ -203,6 +214,7 @@ def main(args):
 
         # train network with clusters as pseudo-labels
         end = time.time()
+        adjust_learning_rate(optimizer, init_lr, epoch, args)
         loss = train(train_dataloader, model, criterion, optimizer, epoch)
 
         # print log
@@ -322,8 +334,22 @@ def compute_features(dataset, model, N):
     X.resize_(X.size()[0], 1, X.size()[1])
     X = X.to(device)
     features = model.forward_without_fc(X).to('cpu').detach().numpy()
-    tsne = TSNE(n_components=2, perplexity=30, n_iter=300, random_state=42)
-    features = tsne.fit_transform(features)
+    '''tsne降维'''
+    # tsne = TSNE(n_components=2, perplexity=30, n_iter=300, random_state=42)
+    # features = tsne.fit_transform(features)
+    '''pca降维'''
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+
+    # Step 1: 数据标准化
+    scaler = StandardScaler()
+    data_scaled = scaler.fit_transform(features)
+
+    # Step 2: 初始化PCA并设置目标维度
+    pca = PCA(n_components=50)  # 假设降到50维，可以根据需要调整
+
+    # Step 3: 执行PCA降维
+    features = pca.fit_transform(data_scaled)
     return features
 
 
@@ -338,9 +364,8 @@ def create_tsne(features, labels):
     plt.show()
 
 
-def get_kmeans_labels(feature):
+def get_kmeans_labels(feature, n_clusters=10):
     # 创建 KMeans 对象
-    n_clusters = 10  # 聚类数量
     kmeans = KMeans(n_clusters=n_clusters, max_iter=300, random_state=42, verbose=0)
 
     # 训练 KMeans

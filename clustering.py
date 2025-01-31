@@ -6,7 +6,7 @@
 #
 import time
 
-import faiss
+# import faiss
 import numpy as np
 from PIL import Image
 from PIL import ImageFile

@@ -39,6 +39,36 @@ def check_accuracy(model, loader, device, error_analysis=False):
     print('Got %d / %d correct (%.2f)' % (num_correct, len(loader.dataset), 100 * acc))
     return acc, confuse_matrix
 
+###=====check the acc of model on loader, if error_analysis return confuseMatrix====
+def check_semi_accuracy(model, loader, device, error_analysis=False):
+    # save the errors samples predicted by model
+    ys = np.array([])
+    y_preds = np.array([])
+    confuse_matrix = None
+    # correct counts
+    num_correct = 0
+    model.eval()  # Put the model in test mode (the opposite of model.train(), essentially)
+    with torch.no_grad():
+        # one batch
+        for x, y, _ in loader:
+            x.resize_(x.size()[0], 1, x.size()[1])
+            x, y = x.float(), y.long()
+            x, y = x.to(device), y.to(device)
+            # predictions
+            scores = model(x)
+            preds = scores.max(1, keepdim=True)[1]
+            # accumulate the corrects
+            num_correct += preds.eq(y.view_as(preds)).sum().item()
+            # confuse matrix: labels and preds
+            if error_analysis:
+                ys = np.append(ys, np.array(y.cpu()))
+                y_preds = np.append(y_preds, np.array(preds.cpu()))
+    acc = float(num_correct) / len(loader.dataset)
+    # confuse matrix
+    if error_analysis:
+        confuse_matrix = pd.crosstab(y_preds, ys, margins=True)
+    print('Got %d / %d correct (%.2f)' % (num_correct, len(loader.dataset), 100 * acc))
+    return acc, confuse_matrix
 
 # Copyright (c) 2017-present, Facebook, Inc.
 # All rights reserved.
@@ -196,43 +226,93 @@ def accuracy(output, target, topk=(1,)):
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
-
-if __name__ == "__main__":
-    from clustering import Kmeans
-    import clustering
+def pareto_sample(total_sample=500, beta=100, class_num=10):
     import numpy as np
 
-    # 初始化 Kmeans
-    n_clusters = 10
-    kmeans = Kmeans(n_clusters)
+    # 帕累托分布参数
+    from scipy.optimize import fsolve
 
-    # 聚类特征数据
-    features = np.random.rand(1000, 512)  # 假设有 1000 个样本，每个样本是 128 维特征
-    cluster_loss = kmeans.cluster(features, verbose=True)
+    # 定义方程组，根据 R 和 n 求解 alpha
+    def equation(alpha, R, n):
+        p1 = 1 - 2 ** (-alpha)
+        pn = n ** (-alpha) - (n + 1) ** (-alpha)
+        return p1 / pn - R
 
-    # 获取每个簇的样本列表
-    images_lists = kmeans.images_lists
+    # 初始猜测 alpha 值
+    alpha_guess = 1.0
 
-    images_lists[9] = []
-    dataset = \
-        clustering.cluster_assign(images_lists,
-                                  features)
-    # 检测空簇
-    empty_clusters = [i for i, cluster in enumerate(images_lists) if len(cluster) == 0]
-    print(f"Empty clusters: {empty_clusters}")
-    dataset
-    # 如果存在空簇，重新分配样本
-    if empty_clusters:
-        def redistribute_empty_clusters(images_lists):
-            largest_cluster_idx = max(range(len(images_lists)), key=lambda i: len(images_lists[i]))
-            largest_cluster = images_lists[largest_cluster_idx]
+    # 使用 fsolve 求解 alpha
+    alpha = fsolve(equation, alpha_guess, args=(beta, class_num))[0]
 
-            for i, cluster in enumerate(images_lists):
-                if len(cluster) == 0:
-                    cluster.append(largest_cluster.pop())
-            return images_lists
+    # 定义区间边界
+    bins = np.arange(1, class_num + 2)  # 区间 [0, 1], [1, 2], ..., [class_num-1, class_num]
+
+    # 定义帕累托分布的累积分布函数 F(x)
+    def pareto_cdf(x, alpha):
+        return 1 - x ** (-alpha)
+
+    # 计算每个区间的积分
+    cdf_values = pareto_cdf(bins, alpha)  # 从 1 开始计算 CDF 值 # 在 0 位置插入 0（F(0) = 0）
+    interval_probs = np.diff(cdf_values)  # 每个区间的积分
+
+    # 确保占比总和为 1
+    interval_probs /= interval_probs.sum()
+
+    return np.round(total_sample * interval_probs).astype(int)
 
 
-        images_lists = redistribute_empty_clusters(images_lists)
+import numpy as np
+from scipy.fftpack import fft
 
-    print(f"Re-assigned clusters: {[len(cluster) for cluster in images_lists]}")
+
+def compute_time_domain_features(signal):
+    N = signal.shape[1]
+    mean_val = np.mean(signal, axis=1)
+    std_dev = np.std(signal, axis=1, ddof=1)
+    sqrt_amplitude = (np.mean(np.sqrt(np.abs(signal)), axis=1)) ** 2
+    abs_mean_val = np.mean(np.abs(signal), axis=1)
+    skewness = np.mean(signal ** 3, axis=1)
+    kurtosis = np.mean(signal ** 4, axis=1)
+    variance = np.var(signal, axis=1)
+    kurtosis_index = kurtosis / (np.sqrt(variance) ** 2)
+    peak_index = np.max(np.abs(signal), axis=1) / std_dev
+    waveform_index = std_dev / abs_mean_val
+    pulse_index = np.max(np.abs(signal), axis=1) / abs_mean_val
+    skewness_index = skewness / (np.sqrt(variance) ** 3)
+
+    return np.column_stack([
+        mean_val, std_dev, sqrt_amplitude, abs_mean_val, skewness, kurtosis, variance,
+        kurtosis_index, peak_index, waveform_index, pulse_index, skewness_index
+    ])
+
+
+def compute_frequency_domain_features(signal, fs):
+    N = signal.shape[1]
+    freq_spectrum = np.abs(fft(signal, axis=1))[:, :N // 2]
+    freqs = np.fft.fftfreq(N, d=1 / fs)[:N // 2]
+
+    mean_freq = np.mean(freq_spectrum, axis=1)
+    var_freq = np.var(freq_spectrum, axis=1)
+    skewness_freq = np.mean((freq_spectrum - mean_freq[:, None]) ** 3, axis=1) / (var_freq ** (3 / 2))
+    steepness_freq = np.mean((freq_spectrum - mean_freq[:, None]) ** 4, axis=1) / (var_freq ** 2)
+    gravity_freq = np.sum(freqs * freq_spectrum, axis=1) / np.sum(freq_spectrum, axis=1)
+    std_freq = np.sqrt(
+        np.sum((freqs - gravity_freq[:, None]) ** 2 * freq_spectrum, axis=1) / np.sum(freq_spectrum, axis=1))
+    rms_freq = np.sqrt(np.sum(freqs ** 2 * freq_spectrum, axis=1) / np.sum(freq_spectrum, axis=1))
+    avg_freq = np.sum(freqs ** 4 * freq_spectrum, axis=1) / np.sum(freqs ** 2 * freq_spectrum, axis=1)
+    reg_degree = np.sum(freqs ** 2 * freq_spectrum, axis=1) / (
+                np.sqrt(np.sum(freq_spectrum, axis=1)) * np.sqrt(np.sum(freqs ** 4 * freq_spectrum, axis=1)))
+    var_param = std_freq / gravity_freq
+    eighth_moment = np.sum((freqs - gravity_freq[:, None]) ** 3 * freq_spectrum, axis=1) / (N * std_freq ** 3)
+    sixteenth_moment = np.sum((freqs - gravity_freq[:, None]) ** 4 * freq_spectrum, axis=1) / (N * std_freq ** 4)
+
+    return np.column_stack([
+        mean_freq, var_freq, skewness_freq, steepness_freq, gravity_freq, std_freq, rms_freq,
+        avg_freq, reg_degree, var_param, eighth_moment, sixteenth_moment
+    ])
+
+
+if __name__ == '__main__':
+    betas = range(1, 10)
+    for beta in betas:
+        print(pareto_sample(beta=beta))

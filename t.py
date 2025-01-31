@@ -1,22 +1,16 @@
-def min_operations_to_alternate(s: str) -> int:
-    n = len(s)
-    ops1 = ops2 = 0
+import torch
+import torch.nn.functional as F
 
-    # Calculate operations needed for '010101...' pattern
-    for i in range(n):
-        expected_char = '0' if i % 2 == 0 else '1'
-        if s[i] != expected_char:
-            ops1 += 1
+# 假设有 3 个样本，每个样本有 4 个动作的概率
+probs = torch.tensor([[0.1, 0.3, 0.4, 0.2],
+                      [0.25, 0.25, 0.25, 0.25],
+                      [0.7, 0.2, 0.05, 0.05]])
 
-    # Calculate operations needed for '101010...' pattern
-    for i in range(n):
-        expected_char = '1' if i % 2 == 0 else '0'
-        if s[i] != expected_char:
-            ops2 += 1
+# 创建离散概率分布
+action_dist = torch.distributions.Categorical(probs)
 
-    return min(ops1, ops2)
+# 随机采样动作
+action = action_dist.sample()
 
-
-# 示例
-s = "11100"
-print(min_operations_to_alternate(s))  # 输出最少操作次数
+print("概率分布:", probs)
+print("采样的动作索引:", action)

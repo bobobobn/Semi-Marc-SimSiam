@@ -186,7 +186,7 @@ class AddGaussianNoise(torch.nn.Module):
         return waveform + noise
 
 class AddGaussianNoiseSNR(torch.nn.Module):
-    def __init__(self, snr=2):
+    def __init__(self, snr=2, p=1.0):
         """
         添加高斯噪声的变换
         :param mean: 高斯噪声的均值 (默认 0.0)
@@ -418,3 +418,4 @@ class RandomlyAct(torch.nn.Module):
         if random.random() < self.p:
             return self.func(signal)
         return signal
+

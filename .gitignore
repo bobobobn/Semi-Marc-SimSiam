@@ -11,3 +11,5 @@
 /checkpoints
 /checkpoints
 /checkpoints
+*.pyc
+/outcmaes

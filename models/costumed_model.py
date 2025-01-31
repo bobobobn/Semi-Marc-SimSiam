@@ -247,9 +247,13 @@ class StackedCNNEncoderWithPooling(nn.Module):
         #     nn.init.constant_(layers[-3].weight, 0)
         self.encoder = nn.Sequential(*layers)
         self.fc = nn.Sequential(
-            nn.Linear(256, 256),
-            nn.BatchNorm1d(256),
-            nn.Linear(256, num_classes)
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Linear(64, num_classes)
         )
         self.num_classes = num_classes
 
@@ -319,3 +323,28 @@ class StackedCNNEncoderWithPoolingNoFC(nn.Module):
         """
         x = self.encoder(x)
         return x
+
+from torch.nn import functional as F
+
+class ClassBalancedLoss(torch.nn.Module):
+    def __init__(self, class_counts, beta=0.99):
+        super(ClassBalancedLoss, self).__init__()
+        self.beta = beta
+        self.class_counts = class_counts
+
+    def forward(self, logits, labels):
+        """
+        logits: 模型的输出 (batch_size, num_classes)
+        labels: 真实标签 (batch_size)
+        class_counts: 每个类别的样本数量 (num_classes)
+        """
+        effective_num = 1.0 - torch.pow(self.beta, self.class_counts)
+        weights = (1.0 - self.beta) / (effective_num + 1e-8)
+        weights = weights / weights.sum()  # 归一化权重
+        weights = weights.cuda()
+        # 转换为与 logits 对应的 batch 权重
+        label_weights = weights[labels]
+
+        loss = F.cross_entropy(logits, labels, reduction='none')
+        loss = label_weights * loss  # 加权交叉熵
+        return loss.mean()

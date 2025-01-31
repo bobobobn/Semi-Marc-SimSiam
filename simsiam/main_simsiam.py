@@ -32,6 +32,7 @@ import simsiam.builder
 from torch.optim.lr_scheduler import ExponentialLR
 
 from DA.data_augmentations import *
+# from DA.auto_augmentations import *
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -202,7 +203,6 @@ def main_worker(gpu, ngpus_per_node, args):
     # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
     augmentation = [
         AddGaussianNoiseSNR(snr=6),
-        # PhasePerturbation(0.2),
         TimeShift(512),
         RandomChunkShuffle(30),
         RandomCrop([5], 100),
@@ -219,13 +219,36 @@ def main_worker(gpu, ngpus_per_node, args):
         RandomVerticalFlip(),
         RandomReverse(),
     ]
+    import DA.auto_augmentations as auto_aug
+    policies = [
+        auto_aug.SubPolicy(auto_aug.AddGaussianNoiseSNR, scales=(2,6)),
+        auto_aug.SubPolicy(auto_aug.RandomNormalize,(0,0.5)),
+        auto_aug.SubPolicy(auto_aug.PhasePerturbation, (0.1, 0.5)),
+        auto_aug.SubPolicy(auto_aug.RandomChunkShuffle, (10, 100)),
+        auto_aug.SubPolicy(auto_aug.RandomCrop,(1,5)),
+        auto_aug.SubPolicy(auto_aug.RandomScaled,(0.05,0.6)),
+        auto_aug.SubPolicy(auto_aug.RandomAbs),
+        auto_aug.SubPolicy(auto_aug.RandomVerticalFlip),
+        auto_aug.SubPolicy(auto_aug.RandomReverse),
+    ]
+    x = [9.76137495,9.62841475,6.13286137,9.50820234,9.89930726,3.44352795,9.68774306,1.34369853,7.87375472,8.19615979,5.77662035,7.82064208,4.02035759,4.39296966,4.42003606]
+    subpolicies = []
+    idx = 0
+    for i in range(len(policies)):
+        policy = policies[i]
+        p = scale = 1
+        if policy.need_p():
+            p = x[idx]
+            idx += 1
+        if policy.need_scale():
+            scale = x[idx]
+            idx += 1
+
+        subpolicies.append(policies[i % len(policies)].get_entity(scale=scale, p=p))
     import data.ssv_data as ssv_data
     nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size)
-    train_dataset =nonLabelCWRUData.get_ssv(simsiam.loader.TwoCropsTransform(transforms.Compose(augmentation), transforms.Compose(sec_augmentation)))
+    train_dataset =nonLabelCWRUData.get_ssv(simsiam.loader.TwoCropsTransform(transforms.Compose(augmentation), transforms.Compose(subpolicies)))
 
-    # if args.distributed:
-    #     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    # else:
     train_sampler = None
 
     train_loader = torch.utils.data.DataLoader(
@@ -247,7 +270,7 @@ def main_worker(gpu, ngpus_per_node, args):
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
-            }, is_best=False, filename='checkpoints/checkpoint_{:04d}.pth.tar'.format(epoch))
+            }, is_best=False, filename='checkpoints/simsiam/checkpoint_{:04d}.pth.tar'.format(epoch))
     print(f"simsiam program ends here, while ssv:{args.ssv_size}, normal:{args.normal_size}, excep_size:{args.excep_size}")
 
 
@@ -292,7 +315,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
         if i % args.print_freq == 0:
             progress.display(i)
-
+    return losses.avg
 
 def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
     torch.save(state, filename)
