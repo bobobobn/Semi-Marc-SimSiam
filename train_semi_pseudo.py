@@ -38,7 +38,7 @@ import os
 import argparse
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('--epochs', default=150, type=int, metavar='N',
+parser.add_argument('--epochs', default=300, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--pretrained_model', metavar='DIR', help='path to dataset',
                     default=r"checkpoints\simsiam\checkpoint_0799.pth.tar")
@@ -86,7 +86,7 @@ def main():
     use_cuda = torch.cuda.is_available()
     if use_cuda:
         print('CUDA is available')
-    betas = [1, 2, 5, 10, 50, 100]
+    betas = [50, 100]
     results = []
     loop = 1
     for beta in betas:
@@ -101,21 +101,22 @@ def main():
         acc = 0
         for i in range(loop):
             model = costumed_model.StackedCNNEncoderWithPooling(num_classes=10)
-            from train import train as fine_tune
-            fine_tune(model, nonLabelCWRUData.get_train(), nonLabelCWRUData.get_test(), args)
-            from gen_pseudo_labels import gen_pseudo_labels
-            ssv_dataset = gen_pseudo_labels(model, nonLabelCWRUData.get_ssv())
-            semiCWRU = data_preprocess.SemiSupervisedImbalanceCWRU(nonLabelCWRUData.get_train(), ssv_dataset,
-                                                                   omega=args.omega)
-            acc += train_semi(model, semiCWRU, nonLabelCWRUData.get_test(), args)
+            # from train import train as fine_tune
+            # fine_tune(model, nonLabelCWRUData.get_train(), nonLabelCWRUData.get_test(), args)
+            # from gen_pseudo_labels import gen_pseudo_labels
+            # ssv_dataset = gen_pseudo_labels(model, nonLabelCWRUData.get_ssv())
+            # semiCWRU = data_preprocess.SemiSupervisedImbalanceCWRU(nonLabelCWRUData.get_train(), ssv_dataset,
+            #                                                        omega=args.omega)
+            acc += train_semi(model, nonLabelCWRUData.get_train(), nonLabelCWRUData.get_test(), args, nonLabelCWRUData.get_ssv())
         acc /= loop
         results.append({"beta":beta, "acc":acc})
         print(results)
     with open("train_results.txt", "a") as f:
-        f.write(str(args.pretrained_model) + "_semi_loop:" + str(results))
+        f.write(str(args.pretrained_model) + "_semi_pseudo:" + str(results))
         f.write("\n")
 
-def train_semi(model, tr_dataset, val_dataset, args):
+
+def train_semi(model, tr_dataset, val_dataset, args, ssv_dataset):
     epochs = args.epochs
     pretrained = args.pretrained
     pretrained_model = args.pretrained_model
@@ -152,9 +153,34 @@ def train_semi(model, tr_dataset, val_dataset, args):
     data_loss = []
     val_acc_list = []
 
-    model = model.to(device)
+    if pretrained:
+        for name, param in model.named_parameters():
+            if not name.startswith('fc'):
+                param.requires_grad = args.requires_grad
+        print("=> loading checkpoint '{}'".format(pretrained_model))
+        checkpoint = torch.load(pretrained_model, map_location="cpu")
 
+        # rename moco pre-trained keys
+        state_dict = checkpoint['state_dict']
+        for k in list(state_dict.keys()):
+            # retain only encoder up to before the embedding layer
+            if k.startswith('encoder') and not k.startswith('encoder.fc'):
+                # remove prefix
+                state_dict[k[len("encoder."):]] = state_dict[k]
+            # delete renamed or unused k
+            del state_dict[k]
+        msg = model.load_state_dict(state_dict, strict=False)
+        print(set(msg.missing_keys))
+        # assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
+        model = model.to(device)
+    T1 = 150
+    T2 = 250
     for epoch in range(epochs):
+        if epoch >= T1:
+            from gen_pseudo_labels import gen_pseudo_labels
+            ssv_dataset = gen_pseudo_labels(model, ssv_dataset)
+            tr_loader = DataLoader(data_preprocess.SemiSupervisedImbalanceCWRU(tr_dataset, ssv_dataset,
+                                                                   omega=args.omega*min(1.0, (epoch-T1)/(T2-T1))), batch_size=args.batch_size, shuffle=True)
         t0 = time.time()
         print('Starting epoch %d / %d' % (epoch + 1, epochs))
         optimizer.step()
@@ -162,29 +188,52 @@ def train_semi(model, tr_dataset, val_dataset, args):
         # set train model or val model for BN and Dropout layers
         model.train()
         # one batch
-        for t, (x, y, omega) in enumerate(tr_loader):
-            # add one dim to fit the requirements of conv1d layer
-            x.resize_(x.size()[0], 1, x.size()[1])
-            x, y, omega = x.float(), y.long(), omega.float()
-            x, y, omega = x.to(device), y.to(device), omega.to(device)
-            # loss and predictions
-            scores = model(x)
-            # 按样本权重计算加权损失
-            raw_loss = loss_fn(scores, y)  # 每个样本的损失
-            loss = (raw_loss @ omega) / len(raw_loss) # 加权平均损失
-            data_loss.append(loss.to("cpu").detach().numpy())
-            writer.add_scalar('loss', loss.item())
-            # print and save loss per 'print_every' times
-            if (t + 1) % opt.print_every == 0:
-                print('t = %d, loss = %.4f' % (t + 1, loss.item()))
-            # parameters update
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        if epoch < T1:
+            loss_fn = torch.nn.CrossEntropyLoss()
+            for t, (x, y) in enumerate(tr_loader):
+                # add one dim to fit the requirements of conv1d layer
+                x.resize_(x.size()[0], 1, x.size()[1])
+                x, y = x.float(), y.long()
+                x, y = x.to(device), y.to(device)
+                # loss and predictions
+                scores = model(x)
+                loss = loss_fn(scores, y)
+                data_loss.append(loss.to("cpu").detach().numpy())
+                # print and save loss per 'print_every' times
+                if (t + 1) % opt.print_every == 0:
+                    print('t = %d, loss = %.4f' % (t + 1, loss.item()))
+                # parameters update
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+        else:
+            loss_fn = torch.nn.CrossEntropyLoss(reduction='none')
+            for t, (x, y, omega) in enumerate(tr_loader):
+                # add one dim to fit the requirements of conv1d layer
+                x.resize_(x.size()[0], 1, x.size()[1])
+                x, y, omega = x.float(), y.long(), omega.float()
+                x, y, omega = x.to(device), y.to(device), omega.to(device)
+                # loss and predictions
+                scores = model(x)
+                # 按样本权重计算加权损失
+                raw_loss = loss_fn(scores, y)  # 每个样本的损失
+                loss = (raw_loss @ omega) / len(raw_loss) # 加权平均损失
+                data_loss.append(loss.to("cpu").detach().numpy())
+                writer.add_scalar('loss', loss.item())
+                # print and save loss per 'print_every' times
+                if (t + 1) % opt.print_every == 0:
+                    print('t = %d, loss = %.4f' % (t + 1, loss.item()))
+                # parameters update
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
         adjust_learning_rate(optimizer, init_lr, epoch, epochs)
         # save epoch loss and acc to train or val history
-        train_acc, _= check_semi_accuracy(model, tr_loader, device)
+        if epoch < T1:
+            train_acc, _ = check_accuracy(model, tr_loader, device)
+        else:
+            train_acc, _= check_semi_accuracy(model, tr_loader, device)
         val_acc, _= check_accuracy(model, val_loader, device)
         val_acc_list.append(val_acc)
         # writer acc and weight to tensorboard
@@ -196,9 +245,16 @@ def train_semi(model, tr_dataset, val_dataset, args):
             best_acc = val_acc
             best_model_wts = copy.deepcopy(model.state_dict())
         t1 = time.time()
+        save_checkpoint({
+            'epoch': epoch + 1,
+            'state_dict': model.state_dict(),
+            'optimizer': optimizer.state_dict(),
+        }, is_best=False, filename='checkpoints/semi/checkpoint_{:04d}.pth.tar'.format(epoch))
 
     val_acc, _= check_accuracy(model, val_loader, device)
     return val_acc
+
+
 
 
 def adjust_learning_rate(optimizer, init_lr, epoch, epochs):

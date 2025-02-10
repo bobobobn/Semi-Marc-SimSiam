@@ -133,16 +133,18 @@ class SimSiamWOPred(nn.Module):
 
         # build a 3-layer projector
         prev_dim = 256
-        self.encoder.fc = nn.Sequential(nn.Linear(prev_dim, prev_dim, bias=False),
-                                        nn.BatchNorm1d(prev_dim),
-                                        nn.ReLU(inplace=True), # first layer
-                                        nn.Linear(prev_dim, prev_dim, bias=False),
-                                        nn.BatchNorm1d(prev_dim),
-                                        nn.ReLU(inplace=True), # second layer
+        self.encoder.fc = nn.Sequential(
+                                        # nn.Linear(prev_dim, prev_dim, bias=False),
+                                        # nn.BatchNorm1d(prev_dim),
+                                        # nn.ReLU(inplace=True), # first layer
+                                        # nn.Linear(prev_dim, prev_dim, bias=False),
+                                        # nn.BatchNorm1d(prev_dim),
+                                        # nn.ReLU(inplace=True), # second layer
                                         self.encoder.fc,
-                                        nn.BatchNorm1d(dim, affine=False)) # output layer
-        self.encoder.fc[6][1].bias.requires_grad = False # hack: not use bias as it is followed by BN
-        self.encoder.fc[6][0].bias.requires_grad = False # hack: not use bias as it is followed by BN
+                                        # nn.BatchNorm1d(dim, affine=False)
+                                        ) # output layer
+        # self.encoder.fc[6][1].bias.requires_grad = False # hack: not use bias as it is followed by BN
+        # self.encoder.fc[6][0].bias.requires_grad = False # hack: not use bias as it is followed by BN
 
     def forward(self, x1, x2):
         """
@@ -157,5 +159,4 @@ class SimSiamWOPred(nn.Module):
         # compute features for one view
         z1 = self.encoder(x1) # NxC
         z2 = self.encoder(x2) # NxC
-
         return z1, z2

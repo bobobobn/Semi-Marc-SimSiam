@@ -88,7 +88,7 @@ def main():
         print('CUDA is available')
     betas = [1, 2, 5, 10, 50, 100]
     results = []
-    loop = 1
+    loop = 5
     for beta in betas:
         nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, beta=beta)
         # out_path = os.path.join(args.output_dir, args.output_filename)
@@ -107,98 +107,19 @@ def main():
             ssv_dataset = gen_pseudo_labels(model, nonLabelCWRUData.get_ssv())
             semiCWRU = data_preprocess.SemiSupervisedImbalanceCWRU(nonLabelCWRUData.get_train(), ssv_dataset,
                                                                    omega=args.omega)
-            acc += train_semi(model, semiCWRU, nonLabelCWRUData.get_test(), args)
+            from train_semi import train_semi
+            train_semi(model, semiCWRU, nonLabelCWRUData.get_test(), args)
+            from models.marc import  Marc
+            from train_marc import marc
+            model_marc = Marc(model, args.num_classes)
+            acc += marc(model_marc, semiCWRU, nonLabelCWRUData.get_test(), args)
         acc /= loop
         results.append({"beta":beta, "acc":acc})
         print(results)
     with open("train_results.txt", "a") as f:
-        f.write(str(args.pretrained_model) + "_semi_loop:" + str(results))
+        f.write(str(args.pretrained_model) + "_semi_marc:" + str(results))
         f.write("\n")
 
-def train_semi(model, tr_dataset, val_dataset, args):
-    epochs = args.epochs
-    pretrained = args.pretrained
-    pretrained_model = args.pretrained_model
-    tr_loader = DataLoader(tr_dataset, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True)
-    print('#training num = %d' % len(tr_dataset))
-
-    writer = SummaryWriter(comment=str(opt.model_param['kernel_num1'])+'_'+
-                           str(opt.model_param['kernel_num2']))
-
-    total_steps = 0
-    from torch.optim.lr_scheduler import ExponentialLR
-
-    init_lr = 0.05 * opt.batch_size / 256
-    optimizer = torch.optim.SGD(model.parameters(),
-                                lr=init_lr,
-                                momentum=0.9,
-                                weight_decay=1e-4)
-
-    # Define the exponential decay scheduler
-    gamma = 0.95  # Decay factor
-    scheduler = ExponentialLR(optimizer, gamma=gamma)
-
-
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-    loss_fn = torch.nn.CrossEntropyLoss(reduction='none')
-
-    ###==============training=================###
-    model = model.to(device)
-    best_model_wts = copy.deepcopy(model.state_dict())
-    best_acc = 0.0
-    # one epoch
-    data_loss = []
-    val_acc_list = []
-
-    model = model.to(device)
-
-    for epoch in range(epochs):
-        t0 = time.time()
-        print('Starting epoch %d / %d' % (epoch + 1, epochs))
-        optimizer.step()
-        # scheduler.step()
-        # set train model or val model for BN and Dropout layers
-        model.train()
-        # one batch
-        for t, (x, y, omega) in enumerate(tr_loader):
-            # add one dim to fit the requirements of conv1d layer
-            x.resize_(x.size()[0], 1, x.size()[1])
-            x, y, omega = x.float(), y.long(), omega.float()
-            x, y, omega = x.to(device), y.to(device), omega.to(device)
-            # loss and predictions
-            scores = model(x)
-            # 按样本权重计算加权损失
-            raw_loss = loss_fn(scores, y)  # 每个样本的损失
-            loss = (raw_loss @ omega) / len(raw_loss) # 加权平均损失
-            data_loss.append(loss.to("cpu").detach().numpy())
-            writer.add_scalar('loss', loss.item())
-            # print and save loss per 'print_every' times
-            if (t + 1) % opt.print_every == 0:
-                print('t = %d, loss = %.4f' % (t + 1, loss.item()))
-            # parameters update
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-        adjust_learning_rate(optimizer, init_lr, epoch, epochs)
-        # save epoch loss and acc to train or val history
-        train_acc, _= check_semi_accuracy(model, tr_loader, device)
-        val_acc, _= check_accuracy(model, val_loader, device)
-        val_acc_list.append(val_acc)
-        # writer acc and weight to tensorboard
-        writer.add_scalars('acc', {'train_acc': train_acc, 'val_acc': val_acc}, epoch)
-        for name, param in model.named_parameters():
-            writer.add_histogram(name, param.clone().cpu().data.numpy(), epoch)
-        # save the best model
-        if val_acc > best_acc:
-            best_acc = val_acc
-            best_model_wts = copy.deepcopy(model.state_dict())
-        t1 = time.time()
-
-    val_acc, _= check_accuracy(model, val_loader, device)
-    return val_acc
 
 
 def adjust_learning_rate(optimizer, init_lr, epoch, epochs):

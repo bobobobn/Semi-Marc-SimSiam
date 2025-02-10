@@ -83,7 +83,7 @@ import models.Resnet1d as resnet
 import models.costumed_model as costumed_model
 model = costumed_model.StackedCNNEncoderWithPooling(num_classes=64)
 
-pretrained_model = r"checkpoints\simsiamwopred\checkpoint_0499.pth.tar"
+pretrained_model = r"checkpoints/simsiamda/checkpoint_0007.pth.tar"
 print("=> loading checkpoint '{}'".format(pretrained_model))
 checkpoint = torch.load(pretrained_model, map_location="cpu")
 

@@ -38,10 +38,10 @@ import torch.backends.cudnn as cudnn
 import argparse
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
-parser.add_argument('--epochs', default=70, type=int, metavar='N',
+parser.add_argument('--epochs', default=150, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--pretrained_model', metavar='DIR', help='path to dataset',
-                    default=r"checkpoints\simsiamwopred\checkpoint_0499.pth.tar")
+                    default=r"checkpoints\simsiam\checkpoint_0799.pth.tar")
 parser.add_argument('--pretrained', action='store_true', default=True)
 parser.add_argument('-b', '--batch-size', default=32, type=int,
                     metavar='N',
@@ -90,15 +90,14 @@ def main():
         nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size, beta=beta)
         for i in range(loop):
             model = costumed_model.StackedCNNEncoderWithPooling(num_classes=args.num_classes)
-            '''
-                1.用labeled dataset微调model
-                2.用model预测unlabeled dataset
-                3.用λ(unlabeled dataset) & (labeled dataset)微调model
-            '''
             acc += train(model, nonLabelCWRUData.get_train(), nonLabelCWRUData.get_test(), args)
         acc /= loop
         results.append({"beta":beta, "acc":acc})
         print(results)
+
+    with open("train_results.txt", "a") as f:
+        f.write(str(args.pretrained_model) + ":" + str(results))
+        f.write("\n")
 
 def search_augment(policies, args):
     nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size)
@@ -249,12 +248,6 @@ def train(model, tr_dataset, val_dataset, args):
             best_acc = val_acc
             best_model_wts = copy.deepcopy(model.state_dict())
         t1 = time.time()
-        save_checkpoint({
-            'epoch': epoch + 1,
-            'state_dict': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'arch': "fine_tune"
-        }, is_best=False, filename='checkpoints/finetune/checkpoint_{:04d}.pth.tar'.format(epoch))
 
     val_acc, _= check_accuracy(model, val_loader, device)
     return val_acc

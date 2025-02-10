@@ -48,7 +48,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                         ' (default: resnet50)')
 parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers (default: 8)')
-parser.add_argument('--epochs', default=200, type=int, metavar='N',
+parser.add_argument('--epochs', default=500, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -125,79 +125,12 @@ def main():
 
     ngpus_per_node = torch.cuda.device_count()
     # Simply call main_worker function
-    losses, stds, accs = main_worker(args.gpu, ngpus_per_node, args)
+    losses, stds = main_worker(args.gpu, ngpus_per_node, args)
     with open("train_process.txt", "a") as f:
-        f.write(str({"simsiam_wo_pred":{"loss":losses, "std": stds, "accs":accs}}))
+        f.write(str({"simsiam_da":{"loss":losses, "std": stds}}))
         f.write("\n")
+
 def main_worker(gpu, ngpus_per_node, args):
-    args.gpu = gpu
-
-    # suppress printing if not master
-    if args.multiprocessing_distributed and args.gpu != 0:
-        def print_pass(*args):
-            pass
-        builtins.print = print_pass
-
-    if args.gpu is not None:
-        print("Use GPU: {} for training".format(args.gpu))
-
-    # create model
-    print("=> creating model '{}'".format(args.arch))
-    import models.costumed_model
-    baseModel = models.costumed_model.StackedCNNEncoderWithPooling
-    model = simsiam.builder.SimSiamWOPred(
-        baseModel,
-        args.dim, args.pred_dim)
-
-    # infer learning rate before changing batch size
-    init_lr = args.lr * args.batch_size / 256
-
-    # For multiprocessing distributed, DistributedDataParallel constructor
-    # should always set the single device scope, otherwise,
-    # DistributedDataParallel will use all available devices.
-    if args.gpu is not None:
-        torch.cuda.set_device(args.gpu)
-        model.cuda(args.gpu)
-    print(model) # print model
-
-    # define loss function (criterion) and optimizer
-    criterion = nn.CosineSimilarity(dim=1).cuda(args.gpu)
-
-    if args.fix_pred_lr:
-        optim_params = [{'params': model.encoder.parameters(), 'fix_lr': False}]
-    else:
-        optim_params = model.parameters()
-
-    # initial_lr = 0.05
-    # optimizer = torch.optim.SGD(model.parameters(), lr=initial_lr)
-    optimizer = torch.optim.SGD(optim_params, init_lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
-    # Define the exponential decay scheduler
-    gamma = 0.95  # Decay factor
-    # scheduler = ExponentialLR(optimizer, gamma=gamma)
-
-    # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            if args.gpu is None:
-                checkpoint = torch.load(args.resume)
-            else:
-                # Map model to be loaded to specified single gpu.
-                loc = 'cuda:{}'.format(args.gpu)
-                checkpoint = torch.load(args.resume, map_location=loc)
-            args.start_epoch = checkpoint['epoch']
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
-
-    cudnn.benchmark = True
-
-    # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
     augmentation = [
         AddGaussianNoiseSNR(snr=6),
         TimeShift(512),
@@ -205,30 +138,20 @@ def main_worker(gpu, ngpus_per_node, args):
         RandomCrop([5], 100),
         RandomScaled((0.5, 1.5)),
     ]
-    sec_augmentation = [
-        AddGaussianNoiseSNR(snr=6),
-        RandomNormalize(),
-        PhasePerturbation(0.2),
-        RandomChunkShuffle(30),
-        RandomCrop([5], 100),
-        RandomScaled((0.5, 1.5)),
-        RandomAbs(),
-        RandomVerticalFlip(),
-        RandomReverse(),
-    ]
     import DA.auto_augmentations as auto_aug
     policies = [
-        auto_aug.SubPolicy(auto_aug.AddGaussianNoiseSNR, scales=(2,6)),
-        auto_aug.SubPolicy(auto_aug.RandomNormalize,(0,0.5)),
+        auto_aug.SubPolicy(auto_aug.AddGaussianNoiseSNR, scales=(2, 6)),
+        auto_aug.SubPolicy(auto_aug.RandomNormalize, (0, 0.5)),
         auto_aug.SubPolicy(auto_aug.PhasePerturbation, (0.1, 0.5)),
         auto_aug.SubPolicy(auto_aug.RandomChunkShuffle, (10, 100)),
-        auto_aug.SubPolicy(auto_aug.RandomCrop,(1,5)),
-        auto_aug.SubPolicy(auto_aug.RandomScaled,(0.05,0.6)),
+        auto_aug.SubPolicy(auto_aug.RandomCrop, (1, 5)),
+        auto_aug.SubPolicy(auto_aug.RandomScaled, (0.05, 0.6)),
         auto_aug.SubPolicy(auto_aug.RandomAbs),
         auto_aug.SubPolicy(auto_aug.RandomVerticalFlip),
         auto_aug.SubPolicy(auto_aug.RandomReverse),
     ]
-    x = [9.76137495,9.62841475,6.13286137,9.50820234,9.89930726,3.44352795,9.68774306,1.34369853,7.87375472,8.19615979,5.77662035,7.82064208,4.02035759,4.39296966,4.42003606]
+    x = [9.76137495, 9.62841475, 6.13286137, 9.50820234, 9.89930726, 3.44352795, 9.68774306, 1.34369853, 7.87375472,
+         8.19615979, 5.77662035, 7.82064208, 4.02035759, 4.39296966, 4.42003606]
     subpolicies = []
     idx = 0
     for i in range(len(policies)):
@@ -242,32 +165,101 @@ def main_worker(gpu, ngpus_per_node, args):
             idx += 1
 
         subpolicies.append(policies[i % len(policies)].get_entity(scale=scale, p=p))
-    import data.ssv_data as ssv_data
-    nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size)
-    train_dataset =nonLabelCWRUData.get_ssv(simsiam.loader.TwoCropsTransform(transforms.Compose(augmentation), transforms.Compose(subpolicies)))
+    loss_ret, std_ret = {}, {}
+    for da_idx in range(len(policies)):
+        subpolicies_cp = subpolicies.copy()
+        subpolicies_cp.remove(subpolicies_cp[da_idx])
+        args.gpu = gpu
 
-    train_sampler = None
+        # suppress printing if not master
+        if args.multiprocessing_distributed and args.gpu != 0:
+            def print_pass(*args):
+                pass
+            builtins.print = print_pass
 
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        pin_memory=True, sampler=train_sampler, drop_last=True)
-    losses, stds, accs = [], [], []
-    for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
-        adjust_learning_rate(optimizer, init_lr, epoch, args)
+        if args.gpu is not None:
+            print("Use GPU: {} for training".format(args.gpu))
 
-        # train for one epoch
-        loss, std = train(train_loader, model, criterion, optimizer, epoch, args)
-        X = nonLabelCWRUData.get_test().X
-        X = torch.tensor(X).float()
-        X.resize_(X.size()[0], 1, X.size()[1])
-        X = X.cuda()
-        X = model.encoder(X).to('cpu').detach().numpy()
-        acc = kmeans_acc(X, nonLabelCWRUData.get_test().y)
-        losses.append(loss)
-        stds.append(std)
-        accs.append(acc)
+        # create model
+        print("=> creating model '{}'".format(args.arch))
+        import models.costumed_model
+        baseModel = models.costumed_model.StackedCNNEncoderWithPooling
+        model = simsiam.builder.SimSiam(
+            baseModel,
+            args.dim, args.pred_dim)
+
+        # infer learning rate before changing batch size
+        init_lr = args.lr * args.batch_size / 256
+
+        # For multiprocessing distributed, DistributedDataParallel constructor
+        # should always set the single device scope, otherwise,
+        # DistributedDataParallel will use all available devices.
+        if args.gpu is not None:
+            torch.cuda.set_device(args.gpu)
+            model.cuda(args.gpu)
+        print(model) # print model
+
+        # define loss function (criterion) and optimizer
+        criterion = nn.CosineSimilarity(dim=1).cuda(args.gpu)
+
+        if args.fix_pred_lr:
+            optim_params = [{'params': model.encoder.parameters(), 'fix_lr': False},
+                            {'params': model.predictor.parameters(), 'fix_lr': True}]
+        else:
+            optim_params = model.parameters()
+
+        # initial_lr = 0.05
+        # optimizer = torch.optim.SGD(model.parameters(), lr=initial_lr)
+        optimizer = torch.optim.SGD(optim_params, init_lr,
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
+        # Define the exponential decay scheduler
+        gamma = 0.95  # Decay factor
+        # scheduler = ExponentialLR(optimizer, gamma=gamma)
+
+        # optionally resume from a checkpoint
+        if args.resume:
+            if os.path.isfile(args.resume):
+                print("=> loading checkpoint '{}'".format(args.resume))
+                if args.gpu is None:
+                    checkpoint = torch.load(args.resume)
+                else:
+                    # Map model to be loaded to specified single gpu.
+                    loc = 'cuda:{}'.format(args.gpu)
+                    checkpoint = torch.load(args.resume, map_location=loc)
+                args.start_epoch = checkpoint['epoch']
+                model.load_state_dict(checkpoint['state_dict'])
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                print("=> loaded checkpoint '{}' (epoch {})"
+                      .format(args.resume, checkpoint['epoch']))
+            else:
+                print("=> no checkpoint found at '{}'".format(args.resume))
+
+        cudnn.benchmark = True
+
+        # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
+
+        import data.ssv_data as ssv_data
+        nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size)
+        train_dataset =nonLabelCWRUData.get_ssv(simsiam.loader.TwoCropsTransform(transforms.Compose(augmentation), transforms.Compose(subpolicies)))
+
+        train_sampler = None
+
+        train_loader = torch.utils.data.DataLoader(
+            train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+            pin_memory=True, sampler=train_sampler, drop_last=True)
+        losses, stds, accs = [], [], []
+        for epoch in range(args.start_epoch, args.epochs):
+            if args.distributed:
+                train_sampler.set_epoch(epoch)
+            adjust_learning_rate(optimizer, init_lr, epoch, args)
+
+            # train for one epoch
+            loss, std = train(train_loader, model, criterion, optimizer, epoch, args)
+            losses.append(loss)
+            stds.append(std)
+        loss_ret[da_idx] = losses
+        std_ret[da_idx] = stds
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank % ngpus_per_node == 0):
             save_checkpoint({
@@ -275,8 +267,8 @@ def main_worker(gpu, ngpus_per_node, args):
                 'arch': args.arch,
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
-            }, is_best=False, filename='checkpoints/simsiamwopred/checkpoint_{:04d}.pth.tar'.format(epoch))
-    return losses, stds, accs
+            }, is_best=False, filename='checkpoints/simsiamda/checkpoint_{:04d}.pth.tar'.format(da_idx))
+    return loss_ret, std_ret
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
@@ -286,7 +278,7 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
     stds = AverageMeter('std', ':.4f')
     progress = ProgressMeter(
         len(train_loader),
-        [batch_time, data_time, losses, stds],
+        [batch_time, data_time, losses],
         prefix="Epoch: [{}]".format(epoch))
 
     # switch to train mode
@@ -305,11 +297,11 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             images[1] = images[1].cuda(args.gpu, non_blocking=True)
 
         # compute output and loss
-        z1, z2 = model(x1=images[0], x2=images[1])
-        loss = -criterion(z1, z2).mean()
+        p1, p2, z1, z2 = model(x1=images[0], x2=images[1])
+        loss = -(criterion(p1, z2).mean() + criterion(p2, z1).mean()) * 0.5
 
         losses.update(loss.item(), images[0].size(0))
-        stds.update(compute_l2_std(z1.detach().cpu().numpy()), 1)
+        stds.update(compute_l2_std(p1.detach().cpu().numpy()), 1)
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
