@@ -43,6 +43,7 @@ parser.add_argument('--output_dir', default='./data', type=str)
 parser.add_argument('--output_filename', default='pseudo_labeled_cwru.pth', type=str)
 parser.add_argument('--pretrained', action='store_true', default=True)
 parser.add_argument('--requires_grad', action='store_true', default=False)
+parser.add_argument('--semi_requires_grad', action='store_true', default=False)
 parser.add_argument('-b', '--batch-size', default=32, type=int,
                     metavar='N',
                     help='mini-batch size (default: 32), this is the total '
@@ -100,7 +101,7 @@ def main():
             model = costumed_model.StackedCNNEncoderWithPooling(num_classes=10)
             from train import train as fine_tune
             fine_tune(model, nonLabelCWRUData.get_train(), nonLabelCWRUData.get_test(), args)
-            from gen_pseudo_labels import gen_pseudo_labels
+            from utils import gen_pseudo_labels
             ssv_dataset = gen_pseudo_labels(model, nonLabelCWRUData.get_ssv())
             semiCWRU = data_preprocess.SemiSupervisedImbalanceCWRU(nonLabelCWRUData.get_train(), ssv_dataset,
                                                                    omega=args.omega)

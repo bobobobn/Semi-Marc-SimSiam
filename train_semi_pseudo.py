@@ -43,6 +43,7 @@ parser.add_argument('--output_dir', default='./data', type=str)
 parser.add_argument('--output_filename', default='pseudo_labeled_cwru.pth', type=str)
 parser.add_argument('--pretrained', action='store_true', default=True)
 parser.add_argument('--requires_grad', action='store_true', default=False)
+parser.add_argument('--semi_requires_grad', action='store_true', default=False)
 parser.add_argument('-b', '--batch-size', default=32, type=int,
                     metavar='N',
                     help='mini-batch size (default: 32), this is the total '
@@ -174,7 +175,7 @@ def train_semi(model, tr_dataset, val_dataset, args, ssv_dataset):
     T2 = 250
     for epoch in range(epochs):
         if epoch >= T1:
-            from gen_pseudo_labels import gen_pseudo_labels
+            from utils import gen_pseudo_labels
             ssv_dataset = gen_pseudo_labels(model, ssv_dataset)
             tr_loader = DataLoader(data_preprocess.SemiSupervisedImbalanceCWRU(tr_dataset, ssv_dataset,
                                                                    omega=args.omega*min(1.0, (epoch-T1)/(T2-T1))), batch_size=args.batch_size, shuffle=True)

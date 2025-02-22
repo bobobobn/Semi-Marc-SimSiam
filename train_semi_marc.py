@@ -85,7 +85,7 @@ def main():
             class_acc_saved.append({"fine_tune": class_accs})
 
             '''阶段二：半监督学习阶段(Semi)'''
-            from gen_pseudo_labels import gen_pseudo_labels
+            from utils import gen_pseudo_labels
             ssv_dataset = gen_pseudo_labels(model, nonLabelCWRUData.get_ssv())
             semiCWRU = data_preprocess.SemiSupervisedImbalanceCWRU(nonLabelCWRUData.get_train(), ssv_dataset,
                                                                    omega=args.omega)

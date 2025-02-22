@@ -8,6 +8,19 @@ import numpy as np
 import torch
 import pandas as pd
 
+
+def gen_pseudo_labels(model, ssv_dataset):
+    model.eval()
+    X = ssv_dataset.X
+    X = torch.tensor(X).float()
+    X.resize_(X.size()[0], 1, X.size()[1])
+    X = X.cuda()
+    y = model(X)
+    y = torch.argmax(y, dim=1)
+    y = y.to("cpu").detach().numpy()
+    ssv_dataset.y = y
+    return ssv_dataset
+
 ###=====check the acc of model on loader, if error_analysis return confuseMatrix====
 def check_accuracy(model, loader, device, error_analysis=False):
     # save the errors samples predicted by model
