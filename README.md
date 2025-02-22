@@ -1,5 +1,5 @@
 # Semi-Marc SimSiam
- 
+基于SimSiam对比学习的自监督预训练以及基于半监督学习和Marc决策面调整相结合(Semi-Marc)的微调
 ****
 运行simsiam，模型保存在checkpoints/simsiam
 
