@@ -6,27 +6,10 @@ Created on Thu Apr 19 10:31:08 2018
 """
 
 from config import Config
-from data import create_dataset
-from models import create_model
-from torch.utils.data import DataLoader
-from utils import check_accuracy, check_semi_accuracy
 import torch
-from tensorboardX import SummaryWriter
-import copy
-import time
-import pandas as pd
-from models import MLP
-from models import Resnet1d
-from models import Alexnet1d
-from models import BiLSTM1d
-from models import LeNet1d
-from torchsummary import summary
-import numpy as np
 opt = Config()
-from matplotlib import pyplot as plt
 from data import data_preprocess
 from models import costumed_model
-from data import ssv_data
 import math
 import random
 
@@ -87,26 +70,21 @@ def main():
     betas = [1, 10, 50, 100]
     results = []
     class_acc_results = []
-    loop = 5
+    loop = 5 # 运行loop次，取平均值
     for beta in betas:
         nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, beta=beta)
-        # out_path = os.path.join(args.output_dir, args.output_filename)
-        # ssv_dataset = torch.load(out_path)
-        '''
-            1.用labeled dataset微调model
-            2.用model预测unlabeled dataset
-            3.用omega(unlabeled dataset) & (labeled dataset)微调model
-        '''
         fine_tune_acc = 0
         semi_acc = 0
         semi_marc_acc = 0
-
         class_acc_saved = []
         for i in range(loop):
             model = costumed_model.StackedCNNEncoderWithPooling(num_classes=10)
+            '''阶段一：微调阶段'''
             from train import train as fine_tune
             fine_tune_acc_ret, class_accs = fine_tune(model, nonLabelCWRUData.get_train(), nonLabelCWRUData.get_test(), args)
             class_acc_saved.append({"fine_tune": class_accs})
+
+            '''阶段二：半监督学习阶段(Semi)'''
             from gen_pseudo_labels import gen_pseudo_labels
             ssv_dataset = gen_pseudo_labels(model, nonLabelCWRUData.get_ssv())
             semiCWRU = data_preprocess.SemiSupervisedImbalanceCWRU(nonLabelCWRUData.get_train(), ssv_dataset,
@@ -114,6 +92,8 @@ def main():
             from train_semi import train_semi
             semi_acc_ret, class_accs = train_semi(model, semiCWRU, nonLabelCWRUData.get_test(), args)
             class_acc_saved.append({"semi": class_accs})
+
+            '''阶段三：决策面调整阶段（Marc）'''
             from models.marc import Marc
             from train_marc import marc
             model_marc = Marc(model, args.num_classes)
@@ -133,7 +113,6 @@ def main():
         f.write("\n")
         # f.write(str(args.pretrained_model) + "_semi_marc:" + str(class_acc_results))
         # f.write("\n")
-
 
 
 def adjust_learning_rate(optimizer, init_lr, epoch, epochs):

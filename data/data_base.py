@@ -18,7 +18,7 @@ class DataBase():
         self.signals_tt_np, self.labels_tt_np = get_mean_data(signals_tt_np,labels_tt_np)
         signals_tr_np, labels_tr_np, self.ssv_set = train_set_split_ssv(signals_tr_np, labels_tr_np, ssv_size, ssv_size_max)
         if beta is not None:
-            self.signals_tr_ssv, self.labels_tr_ssv = get_imb_data_beta(signals_tr_np, labels_tr_np, beta=beta)
+            self.signals_tr_ssv, self.labels_tr_ssv = get_imb_data_beta(signals_tr_np, labels_tr_np, beta=beta, total_sample=100)
         else:
             self.signals_tr_ssv, self.labels_tr_ssv = get_imb_data(signals_tr_np, labels_tr_np, normal_num=normal_size, excep_num=excep_size)
 

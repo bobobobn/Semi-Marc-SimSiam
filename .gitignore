@@ -13,3 +13,5 @@
 /checkpoints
 *.pyc
 /outcmaes
+*.txt
+*.bat

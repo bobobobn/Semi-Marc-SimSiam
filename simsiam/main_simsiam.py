@@ -143,9 +143,6 @@ def main_worker(gpu, ngpus_per_node, args):
     # create model
     print("=> creating model '{}'".format(args.arch))
     import models.costumed_model
-    import models.Resnet1d as resnet
-    # baseModel = models.costumed_model.CNNEncoder
-    # baseModel = resnet.resnet18
     baseModel = models.costumed_model.StackedCNNEncoderWithPooling
     model = simsiam.builder.SimSiam(
         baseModel,
@@ -271,7 +268,7 @@ def main_worker(gpu, ngpus_per_node, args):
             'state_dict': model.state_dict(),
             'optimizer' : optimizer.state_dict(),
         }, is_best=False,
-            filename='checkpoints/simsiam_ssv_size/checkpoint_{:04d}_size_{:04d}_batchsize_{:04d}.pth.tar'.format(epoch, args.ssv_size, args.batch_size))
+            filename='checkpoints/simsiam/checkpoint_{:04d}_size_{:04d}_batchsize_{:04d}.pth.tar'.format(epoch, args.ssv_size, args.batch_size))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
