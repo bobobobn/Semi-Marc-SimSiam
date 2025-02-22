@@ -23,10 +23,7 @@ from models import LeNet1d
 from torchsummary import summary
 import numpy as np
 opt = Config()
-import gModel
-import dModel
 from matplotlib import pyplot as plt
-from tsne import plot_tsne
 from data import data_preprocess
 from models import costumed_model
 from data import ssv_data

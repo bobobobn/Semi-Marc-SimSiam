@@ -23,10 +23,7 @@ from models import LeNet1d
 from torchsummary import summary
 import numpy as np
 opt = Config()
-import gModel
-import dModel
 from matplotlib import pyplot as plt
-from tsne import plot_tsne
 from data import data_preprocess
 from models import costumed_model
 from data import ssv_data
@@ -41,11 +38,12 @@ parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('--epochs', default=150, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--pretrained_model', metavar='DIR', help='path to dataset',
-                    default=r"checkpoints\simsiam\checkpoint_0799.pth.tar")
+                    default=r"checkpoints\byol\checkpoint_0799_batchsize_0128.pth.tar")
 parser.add_argument('--output_dir', default='./data', type=str)
 parser.add_argument('--output_filename', default='pseudo_labeled_cwru.pth', type=str)
 parser.add_argument('--pretrained', action='store_true', default=True)
 parser.add_argument('--requires_grad', action='store_true', default=False)
+parser.add_argument('--semi_requires_grad', action='store_true', default=False)
 parser.add_argument('-b', '--batch-size', default=32, type=int,
                     metavar='N',
                     help='mini-batch size (default: 32), this is the total '
@@ -86,8 +84,9 @@ def main():
     use_cuda = torch.cuda.is_available()
     if use_cuda:
         print('CUDA is available')
-    betas = [1, 2, 5, 10, 50, 100]
+    betas = [1, 10, 50, 100]
     results = []
+    class_acc_results = []
     loop = 5
     for beta in betas:
         nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, beta=beta)
@@ -98,27 +97,42 @@ def main():
             2.用model预测unlabeled dataset
             3.用omega(unlabeled dataset) & (labeled dataset)微调model
         '''
-        acc = 0
+        fine_tune_acc = 0
+        semi_acc = 0
+        semi_marc_acc = 0
+
+        class_acc_saved = []
         for i in range(loop):
             model = costumed_model.StackedCNNEncoderWithPooling(num_classes=10)
             from train import train as fine_tune
-            fine_tune(model, nonLabelCWRUData.get_train(), nonLabelCWRUData.get_test(), args)
+            fine_tune_acc_ret, class_accs = fine_tune(model, nonLabelCWRUData.get_train(), nonLabelCWRUData.get_test(), args)
+            class_acc_saved.append({"fine_tune": class_accs})
             from gen_pseudo_labels import gen_pseudo_labels
             ssv_dataset = gen_pseudo_labels(model, nonLabelCWRUData.get_ssv())
             semiCWRU = data_preprocess.SemiSupervisedImbalanceCWRU(nonLabelCWRUData.get_train(), ssv_dataset,
                                                                    omega=args.omega)
             from train_semi import train_semi
-            train_semi(model, semiCWRU, nonLabelCWRUData.get_test(), args)
-            from models.marc import  Marc
+            semi_acc_ret, class_accs = train_semi(model, semiCWRU, nonLabelCWRUData.get_test(), args)
+            class_acc_saved.append({"semi": class_accs})
+            from models.marc import Marc
             from train_marc import marc
             model_marc = Marc(model, args.num_classes)
-            acc += marc(model_marc, semiCWRU, nonLabelCWRUData.get_test(), args)
-        acc /= loop
-        results.append({"beta":beta, "acc":acc})
+            acc_ret, class_accs = marc(model_marc, semiCWRU, nonLabelCWRUData.get_test(), args)
+            class_acc_saved.append({"marc": class_accs})
+            fine_tune_acc += fine_tune_acc_ret
+            semi_acc += semi_acc_ret
+            semi_marc_acc += acc_ret
+        fine_tune_acc /= loop
+        semi_acc /= loop
+        semi_marc_acc /= loop
+        results.append({"beta":beta, "fine_tune_acc":fine_tune_acc, "semi_acc":semi_acc, "semi_marc_acc": semi_marc_acc})
+        class_acc_results.append({"beta":beta, "class_acc":class_acc_saved})
         print(results)
     with open("train_results.txt", "a") as f:
         f.write(str(args.pretrained_model) + "_semi_marc:" + str(results))
         f.write("\n")
+        # f.write(str(args.pretrained_model) + "_semi_marc:" + str(class_acc_results))
+        # f.write("\n")
 
 
 

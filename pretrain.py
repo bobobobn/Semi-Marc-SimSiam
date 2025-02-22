@@ -25,7 +25,6 @@ from models import costumed_model
 import numpy as np
 opt = Config()
 from data import data_preprocess
-from data import alfaDataProcess
 from data import ssv_data
 
 def save_checkpoint(acc, epoch, state):

@@ -90,3 +90,4 @@ plt.legend(fontsize=12)
 plt.grid(True)
 plt.yticks([0.045, 0.062], ['0.045', '0.062'])  # 设定Y轴刻度
 plt.show()
+

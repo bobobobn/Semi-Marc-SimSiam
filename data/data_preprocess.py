@@ -13,8 +13,6 @@ import numpy as np
 import os
 import scipy.io as scio
 import torch.utils.data as data
-from Ae1d import create_ae_label
-from DCAe1d import create_dcae_label
 
 class CWRUdata(data.Dataset):
     def __init__(self, x_set, y_set, transform=None):
@@ -94,7 +92,7 @@ def get_pareto_list(head,tail,alpha):
     return y_list
 
 
-def train_set_split_ssv(train_x, train_y, ssv_num):
+def train_set_split_ssv(train_x, train_y, ssv_num, ssv_size_max):
     def split_dataset(X, Y, num_samples_per_class, random_state=42):
         if random_state is not None:
             np.random.seed(random_state)
@@ -107,9 +105,11 @@ def train_set_split_ssv(train_x, train_y, ssv_num):
             # 剩余的作为训练集
             train_indices.extend([idx for idx in class_indices if idx not in test_indices])
         return X[train_indices], X[test_indices], Y[train_indices], Y[test_indices]
-    num_samples_per_class = ssv_num * np.ones((train_y.max()+1), dtype=int)
-
+    # 在同一训练批次中，固定ssv_size_max的大小，保证训练集的样本不变
+    num_samples_per_class = ssv_size_max * np.ones((train_y.max()+1), dtype=int)
     X_train, X_test, Y_train, Y_test = split_dataset(train_x, train_y, num_samples_per_class)
+    num_samples_per_class = ssv_num * np.ones((train_y.max()+1), dtype=int)
+    _, X_test, _, Y_test = split_dataset(X_test, Y_test, num_samples_per_class)
     return X_train, Y_train, X_test
 
 

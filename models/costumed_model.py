@@ -255,6 +255,7 @@ class StackedCNNEncoderWithPooling(nn.Module):
             nn.ReLU(),
             nn.Linear(64, num_classes)
         )
+        self.fc.in_features = 256
         self.num_classes = num_classes
 
     def forward(self, x):

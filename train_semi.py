@@ -9,7 +9,7 @@ from config import Config
 from data import create_dataset
 from models import create_model
 from torch.utils.data import DataLoader
-from utils import check_accuracy, check_semi_accuracy
+from utils import check_accuracy, check_semi_accuracy, check_class_accuracy
 import torch
 from tensorboardX import SummaryWriter
 import copy
@@ -23,10 +23,7 @@ from models import LeNet1d
 from torchsummary import summary
 import numpy as np
 opt = Config()
-import gModel
-import dModel
 from matplotlib import pyplot as plt
-from tsne import plot_tsne
 from data import data_preprocess
 from models import costumed_model
 from data import ssv_data
@@ -115,7 +112,11 @@ def main():
         f.write(str(args.pretrained_model) + "_semi_loop:" + str(results))
         f.write("\n")
 
+
 def train_semi(model, tr_dataset, val_dataset, args):
+    for name, param in model.named_parameters():
+        if not name.startswith('fc'):
+            param.requires_grad = args.semi_requires_grad
     epochs = args.epochs
     pretrained = args.pretrained
     pretrained_model = args.pretrained_model
@@ -153,7 +154,7 @@ def train_semi(model, tr_dataset, val_dataset, args):
     val_acc_list = []
 
     model = model.to(device)
-
+    val_class_acc_list = []
     for epoch in range(epochs):
         t0 = time.time()
         print('Starting epoch %d / %d' % (epoch + 1, epochs))
@@ -185,8 +186,9 @@ def train_semi(model, tr_dataset, val_dataset, args):
         adjust_learning_rate(optimizer, init_lr, epoch, epochs)
         # save epoch loss and acc to train or val history
         train_acc, _= check_semi_accuracy(model, tr_loader, device)
-        val_acc, _= check_accuracy(model, val_loader, device)
+        val_acc, _, class_acc = check_class_accuracy(model, val_loader, device)
         val_acc_list.append(val_acc)
+        val_class_acc_list.append(class_acc)
         # writer acc and weight to tensorboard
         writer.add_scalars('acc', {'train_acc': train_acc, 'val_acc': val_acc}, epoch)
         for name, param in model.named_parameters():
@@ -198,7 +200,7 @@ def train_semi(model, tr_dataset, val_dataset, args):
         t1 = time.time()
 
     val_acc, _= check_accuracy(model, val_loader, device)
-    return val_acc
+    return val_acc, val_class_acc_list
 
 
 def adjust_learning_rate(optimizer, init_lr, epoch, epochs):

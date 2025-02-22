@@ -9,7 +9,7 @@ from config import Config
 from data import create_dataset
 from models import create_model
 from torch.utils.data import DataLoader
-from utils import check_accuracy
+from utils import check_accuracy, check_semi_accuracy, check_class_accuracy
 import torch
 from tensorboardX import SummaryWriter
 import copy
@@ -23,10 +23,7 @@ from models import LeNet1d
 from torchsummary import summary
 import numpy as np
 opt = Config()
-import gModel
-import dModel
 from matplotlib import pyplot as plt
-from tsne import plot_tsne
 from data import data_preprocess
 from models import costumed_model
 from data import ssv_data
@@ -231,6 +228,7 @@ def marc(model, tr_dataset, val_dataset, args):
     # one epoch
     data_loss = []
     val_acc_list = []
+    val_class_acc_list = []
     model = model.to(device)
 
     for epoch in range(epochs):
@@ -262,8 +260,9 @@ def marc(model, tr_dataset, val_dataset, args):
         adjust_learning_rate(optimizer, init_lr, epoch, epochs)
         # save epoch loss and acc to train or val history
         train_acc, _= check_accuracy(model, tr_loader, device)
-        val_acc, _= check_accuracy(model, val_loader, device)
+        val_acc, _, class_acc = check_class_accuracy(model, val_loader, device)
         val_acc_list.append(val_acc)
+        val_class_acc_list.append(class_acc)
         # writer acc and weight to tensorboard
         writer.add_scalars('acc', {'train_acc': train_acc, 'val_acc': val_acc}, epoch)
         for name, param in model.named_parameters():
@@ -275,7 +274,7 @@ def marc(model, tr_dataset, val_dataset, args):
         t1 = time.time()
 
     val_acc, _= check_accuracy(model, val_loader, device)
-    return val_acc
+    return val_acc, val_class_acc_list
 
 
 def adjust_learning_rate(optimizer, init_lr, epoch, epochs):

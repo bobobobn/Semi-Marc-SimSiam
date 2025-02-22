@@ -83,7 +83,7 @@ import models.Resnet1d as resnet
 import models.costumed_model as costumed_model
 model = costumed_model.StackedCNNEncoderWithPooling(num_classes=64)
 
-pretrained_model = r"checkpoints/simsiamda/checkpoint_0007.pth.tar"
+pretrained_model = r"checkpoints\byol\checkpoint_0799_batchsize_0500.pth.tar"
 print("=> loading checkpoint '{}'".format(pretrained_model))
 checkpoint = torch.load(pretrained_model, map_location="cpu")
 
@@ -115,8 +115,8 @@ X = model.forward_without_fc(X).to('cpu').detach().numpy()
 # 降维
 X_tsne = tsne.fit_transform(X)
 
-labels = get_kmeans_labels(X_tsne)
-kmeans_acc = compute_kmeans_acc(labels, y)
+# labels = get_kmeans_labels(X_tsne)
+# kmeans_acc = compute_kmeans_acc(labels, y)
 
 plt.figure(figsize=(10, 8))
 scatter = plt.scatter(X_tsne[:, 0], X_tsne[:, 1], c=y, cmap='tab10', s=10)

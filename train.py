@@ -9,7 +9,7 @@ from config import Config
 from data import create_dataset
 from models import create_model
 from torch.utils.data import DataLoader
-from utils import check_accuracy
+from utils import check_accuracy, check_class_accuracy
 import torch
 from tensorboardX import SummaryWriter
 import copy
@@ -23,10 +23,7 @@ from models import LeNet1d
 from torchsummary import summary
 import numpy as np
 opt = Config()
-import gModel
-import dModel
 from matplotlib import pyplot as plt
-from tsne import plot_tsne
 from data import data_preprocess
 from models import costumed_model
 from data import ssv_data
@@ -42,7 +39,7 @@ parser.add_argument('--epochs', default=150, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--pretrained_model', metavar='DIR', help='path to dataset',
                     default=r"checkpoints\simsiam\checkpoint_0799.pth.tar")
-parser.add_argument('--pretrained', action='store_true', default=True)
+parser.add_argument('--pretrained', action='store_true', default=False)
 parser.add_argument('-b', '--batch-size', default=32, type=int,
                     metavar='N',
                     help='mini-batch size (default: 32), this is the total '
@@ -83,67 +80,28 @@ def main():
     if use_cuda:
         print('CUDA is available')
     betas = [1, 2, 5, 10, 50, 100]
-    results = []
-    loop = 5
     for beta in betas:
-        acc = 0
         nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size, beta=beta)
-        for i in range(loop):
-            model = costumed_model.StackedCNNEncoderWithPooling(num_classes=args.num_classes)
-            acc += train(model, nonLabelCWRUData.get_train(), nonLabelCWRUData.get_test(), args)
-        acc /= loop
-        results.append({"beta":beta, "acc":acc})
-        print(results)
+        model = costumed_model.StackedCNNEncoderWithPooling(num_classes=args.num_classes)
+        train(model, nonLabelCWRUData.get_train(), nonLabelCWRUData.get_test(), args)
+        # X = nonLabelCWRUData.get_test().X
+        # y = nonLabelCWRUData.get_test().y
+        # X = torch.tensor(X).float()
+        # X.resize_(X.size()[0], 1, X.size()[1])
+        # X = X.cuda()
+        # X = model.forward_without_fc(X).to('cpu').detach().numpy()
+        # # 降维
+        # from sklearn.manifold import TSNE
+        # tsne = TSNE(n_components=2, perplexity=30, n_iter=300, random_state=42)
+        # X_tsne = tsne.fit_transform(X)
+        # plt.figure(figsize=(10, 8))
+        # scatter = plt.scatter(X_tsne[:, 0], X_tsne[:, 1], c=y, cmap='tab10', s=10)
+        # plt.colorbar(scatter, label='Classes')
+        # plt.title("t-SNE Visualization")
+        # plt.xlabel("t-SNE Dimension 1")
+        # plt.ylabel("t-SNE Dimension 2")
+        # plt.show()
 
-    with open("train_results.txt", "a") as f:
-        f.write(str(args.pretrained_model) + ":" + str(results))
-        f.write("\n")
-
-def search_augment(policies, args):
-    nonLabelCWRUData = ssv_data.NonLabelSSVData(ssv_size=args.ssv_size, normal_size=args.normal_size, excep_size=args.excep_size)
-    import cma
-    import numpy as np
-
-    for k in range(len(policies)):
-        # 问题维度
-        dim = 2  # 变量的维度
-        # 初始化参数
-        initial_solution = np.random.uniform(0, 10, dim)  # 初始解在 [0, 10] 之间
-        sigma = 2.0  # 初始步长
-        options = {
-            'popsize': 4 + int(3 * np.log(dim)),  # 种群规模
-            'bounds': [0, 10],  # 变量边界
-            'maxiter': 10,  # 最大迭代次数
-        }
-
-        # 创建CMA-ES优化器
-        es = cma.CMAEvolutionStrategy(initial_solution, sigma, options)
-
-        # 优化过程
-        while not es.stop():
-            solutions = es.ask()  # 生成连续解
-            fitnesses = []  # 评估适应度
-            for x in solutions:
-                subpolicies = []
-                policy = policies[k]
-                scale = x[0]
-                p = x[1]
-                if not policy.need_p():
-                    p=1.0
-                subpolicies.append(policy.get_entity(scale, p))
-                tr_dataset = nonLabelCWRUData.get_train(transforms.Compose(subpolicies))
-                model = costumed_model.StackedCNNEncoderWithPooling(num_classes=args.num_classes)
-                val_dataset = nonLabelCWRUData.get_test()
-                cluster_score = train(model, tr_dataset, val_dataset, args)
-                fitnesses.append(-cluster_score)
-            es.tell(solutions, fitnesses)  # 更新CMA-ES参数
-            es.logger.add()
-            es.disp()
-        # 优化结果
-        best_solution = es.result.xbest
-        best_fitness = es.result.fbest
-        with open("result.txt", 'a') as file:
-            file.write(f"policy {k}: best_solution:{best_solution}, acc: {best_fitness}\n")
 
 def train(model, tr_dataset, val_dataset, args):
     epochs = args.epochs
@@ -186,23 +144,29 @@ def train(model, tr_dataset, val_dataset, args):
     # one epoch
     data_loss = []
     val_acc_list = []
+    val_class_acc_list = []
 
     if pretrained:
         for name, param in model.named_parameters():
             if not name.startswith('fc'):
-                param.requires_grad = False
+                param.requires_grad = args.requires_grad
         print("=> loading checkpoint '{}'".format(pretrained_model))
         checkpoint = torch.load(pretrained_model, map_location="cpu")
-
-        # rename moco pre-trained keys
         state_dict = checkpoint['state_dict']
-        for k in list(state_dict.keys()):
-            # retain only encoder up to before the embedding layer
-            if k.startswith('encoder') and not k.startswith('encoder.fc'):
-                # remove prefix
-                state_dict[k[len("encoder."):]] = state_dict[k]
-            # delete renamed or unused k
-            del state_dict[k]
+        if checkpoint['arch'] != 'fine_tune':
+            for k in list(state_dict.keys()):
+                # retain only encoder up to before the embedding layer
+                if k.startswith('encoder.') and not k.startswith('encoder.fc'):
+                    if k.startswith('encoder.encoder'):
+                        state_dict[k[len("encoder."):]] = state_dict[k]
+                    else:
+                        state_dict[k[len("encoder."):]] = state_dict[k]
+                # delete renamed or unused k
+                del state_dict[k]
+        else:
+            for k in list(state_dict.keys()):
+                if not k.startswith('encoder.'):
+                    del state_dict[k]
         msg = model.load_state_dict(state_dict, strict=False)
         print(set(msg.missing_keys))
         # assert set(msg.missing_keys) == {"fc.weight", "fc.bias"}
@@ -237,8 +201,9 @@ def train(model, tr_dataset, val_dataset, args):
         adjust_learning_rate(optimizer, init_lr, epoch, epochs)
         # save epoch loss and acc to train or val history
         train_acc, _= check_accuracy(model, tr_loader, device)
-        val_acc, _= check_accuracy(model, val_loader, device)
+        val_acc, _, class_acc = check_class_accuracy(model, val_loader, device)
         val_acc_list.append(val_acc)
+        val_class_acc_list.append(class_acc)
         # writer acc and weight to tensorboard
         writer.add_scalars('acc', {'train_acc': train_acc, 'val_acc': val_acc}, epoch)
         for name, param in model.named_parameters():
@@ -250,7 +215,7 @@ def train(model, tr_dataset, val_dataset, args):
         t1 = time.time()
 
     val_acc, _= check_accuracy(model, val_loader, device)
-    return val_acc
+    return val_acc, val_class_acc_list
 
 
 def adjust_learning_rate(optimizer, init_lr, epoch, epochs):

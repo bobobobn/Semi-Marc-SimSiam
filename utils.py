@@ -39,6 +39,69 @@ def check_accuracy(model, loader, device, error_analysis=False):
     print('Got %d / %d correct (%.2f)' % (num_correct, len(loader.dataset), 100 * acc))
     return acc, confuse_matrix
 
+
+def check_class_accuracy(model, loader, device, error_analysis=False):
+    import numpy as np
+    import pandas as pd
+    import torch
+
+    ys = np.array([])
+    y_preds = np.array([])
+    confuse_matrix = None
+
+    # 保存每个类别的正确数和总数
+    class_correct = {}
+    class_total = {}
+
+    # 模型预测的总正确数
+    num_correct = 0
+
+    model.eval()  # 将模型设置为评估模式
+    with torch.no_grad():
+        for x, y in loader:
+            # 调整输入尺寸
+            x.resize_(x.size()[0], 1, x.size()[1])
+            x, y = x.float(), y.long()
+            x, y = x.to(device), y.to(device)
+
+            # 模型预测
+            scores = model(x)
+            preds = scores.max(1, keepdim=False)[1]  # 获得预测的类别
+
+            # 总正确数
+            num_correct += preds.eq(y).sum().item()
+
+            # 按类别统计正确数和总数
+            for label in y.unique():
+                label = label.item()
+                if label not in class_correct:
+                    class_correct[label] = 0
+                    class_total[label] = 0
+                class_correct[label] += (preds[y == label] == label).sum().item()
+                class_total[label] += (y == label).sum().item()
+
+            # 如果需要混淆矩阵，保存所有预测值和真实值
+            if error_analysis:
+                ys = np.append(ys, np.array(y.cpu()))
+                y_preds = np.append(y_preds, np.array(preds.cpu()))
+
+    # 总准确率
+    acc = float(num_correct) / len(loader.dataset)
+
+    # 计算每个类别的准确率
+    class_accuracies = []
+    for label in sorted(class_correct.keys()):
+        class_acc = float(class_correct[label]) / class_total[label] if class_total[label] > 0 else 0.0
+        class_accuracies.append(class_acc)
+
+    # 混淆矩阵
+    if error_analysis:
+        confuse_matrix = pd.crosstab(y_preds, ys, margins=True)
+
+    print('Got %d / %d correct (%.2f)' % (num_correct, len(loader.dataset), 100 * acc))
+    return acc, confuse_matrix, class_accuracies
+
+
 ###=====check the acc of model on loader, if error_analysis return confuseMatrix====
 def check_semi_accuracy(model, loader, device, error_analysis=False):
     # save the errors samples predicted by model
@@ -225,6 +288,13 @@ def accuracy(output, target, topk=(1,)):
             correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
+
+import shutil
+def save_checkpoint(state, is_best, filename='checkpoint.pth.tar'):
+    torch.save(state, filename)
+    if is_best:
+        shutil.copyfile(filename, 'model_best.pth.tar')
+
 
 def pareto_sample(total_sample=500, beta=100, class_num=10):
     import numpy as np

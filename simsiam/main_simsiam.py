@@ -48,7 +48,7 @@ parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                         ' (default: resnet50)')
 parser.add_argument('-j', '--workers', default=8, type=int, metavar='N',
                     help='number of data loading workers (default: 8)')
-parser.add_argument('--epochs', default=200, type=int, metavar='N',
+parser.add_argument('--epochs', default=800, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
@@ -253,7 +253,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        pin_memory=True, sampler=train_sampler, drop_last=True)
+        pin_memory=True, sampler=train_sampler, drop_last=False)
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -263,15 +263,15 @@ def main_worker(gpu, ngpus_per_node, args):
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args)
         # scheduler.step()
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                and args.rank % ngpus_per_node == 0):
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'optimizer' : optimizer.state_dict(),
-            }, is_best=False, filename='checkpoints/simsiam/checkpoint_{:04d}.pth.tar'.format(epoch))
-    print(f"simsiam program ends here, while ssv:{args.ssv_size}, normal:{args.normal_size}, excep_size:{args.excep_size}")
+    if not args.multiprocessing_distributed or (args.multiprocessing_distributed
+            and args.rank % ngpus_per_node == 0):
+        save_checkpoint({
+            'epoch': epoch + 1,
+            'arch': args.arch,
+            'state_dict': model.state_dict(),
+            'optimizer' : optimizer.state_dict(),
+        }, is_best=False,
+            filename='checkpoints/simsiam_ssv_size/checkpoint_{:04d}_size_{:04d}_batchsize_{:04d}.pth.tar'.format(epoch, args.ssv_size, args.batch_size))
 
 
 def train(train_loader, model, criterion, optimizer, epoch, args):
