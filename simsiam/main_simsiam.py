@@ -94,7 +94,7 @@ parser.add_argument('--pred-dim', default=512, type=int,
 parser.add_argument('--fix-pred-lr', action='store_true',
                     help='Fix learning rate for the predictor')
 parser.add_argument('--ssv_size', default=100, type=int,
-                    help='ssv_set size (default: 200)')
+                    help='ssv_set size per class (default: 200)')
 parser.add_argument('--normal_size', default=100, type=int,
                     help='normal_size size (default: 200)')
 parser.add_argument('--excep_size', default=100, type=int,
